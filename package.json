@@ -1,0 +1,29 @@
+{
+  "name": "dry-july",
+  "version": "1.0.0",
+  "description": "Dry July — a nostr-first alcohol-free month tracker and community",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "gen:icons": "node scripts/gen-icons.mjs"
+  },
+  "keywords": [
+    "nostr",
+    "pwa",
+    "dry-july",
+    "sobriety",
+    "alcohol-free"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "nostr-tools": "^2.23.5"
+  },
+  "devDependencies": {
+    "sharp": "^0.34.2",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.2",
+    "vite-plugin-pwa": "^0.20.5"
+  }
+}
