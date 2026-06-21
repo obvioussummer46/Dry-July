@@ -8,8 +8,11 @@ import {
   npub,
   nsec,
   publish,
+  react,
+  reply,
   shortNpub,
   subscribeFeed,
+  subscribeInteractions,
   type FeedItem,
   type Identity
 } from "./nostr";
@@ -36,6 +39,12 @@ interface State {
   feed: FeedItem[];
   profiles: Map<string, { name?: string; picture?: string }>;
   feedUnsub: (() => void) | null;
+  interactionsUnsub: (() => void) | null;
+  reactions: Map<string, Set<string>>;
+  replies: Map<string, FeedItem[]>;
+  expanded: Set<string>;
+  openReply: string | null;
+  drafts: Record<string, string>;
   revealKey: boolean;
 }
 
@@ -47,6 +56,12 @@ const state: State = {
   feed: [],
   profiles: new Map(),
   feedUnsub: null,
+  interactionsUnsub: null,
+  reactions: new Map(),
+  replies: new Map(),
+  expanded: new Set(),
+  openReply: null,
+  drafts: {},
   revealKey: false
 };
 
@@ -55,8 +70,18 @@ let root: HTMLElement;
 export function mount(el: HTMLElement) {
   root = el;
   root.addEventListener("click", onClick);
+  // Preserve text-field contents across re-renders.
+  root.addEventListener("input", (e) => {
+    const el = e.target as HTMLElement;
+    if (el.id && (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement)) {
+      state.drafts[el.id] = el.value;
+    }
+  });
   render();
-  if (state.identity) backgroundSync();
+  if (state.identity) {
+    backgroundSync();
+    loadSelfProfile();
+  }
 }
 
 /* ---------------- Helpers ---------------- */
@@ -104,7 +129,25 @@ function timeAgo(sec: number): string {
 function displayName(): string {
   const n = state.data.settings.displayName.trim();
   if (n) return n;
+  const self = state.identity && state.profiles.get(state.identity.pubkey);
+  if (self?.name) return self.name;
   return state.identity ? shortNpub(state.identity.pubkey) : "anon";
+}
+
+/** Avatar markup for a given pubkey (picture if known, else initial). */
+function avatar(pubkey: string, name: string): string {
+  const prof = state.profiles.get(pubkey);
+  if (prof?.picture) return `<img src="${esc(prof.picture)}" alt="" />`;
+  return esc((name[0] || "?").toUpperCase());
+}
+
+async function loadSelfProfile() {
+  if (!state.identity) return;
+  const fetched = await fetchProfiles([state.identity.pubkey]);
+  if (fetched.size) {
+    fetched.forEach((v, k) => state.profiles.set(k, v));
+    render();
+  }
 }
 
 async function persist({ push = true }: { push?: boolean } = {}) {
@@ -129,6 +172,7 @@ async function backgroundSync() {
 function render() {
   if (!state.identity) {
     root.innerHTML = renderOnboard();
+    restoreDrafts();
     return;
   }
   root.innerHTML = `
@@ -136,6 +180,25 @@ function render() {
     <div class="screen">${renderView()}</div>
     ${renderTabbar()}
   `;
+  restoreDrafts();
+}
+
+/** Re-apply saved text-field drafts after a re-render. */
+function restoreDrafts() {
+  for (const [id, value] of Object.entries(state.drafts)) {
+    const el = root.querySelector<HTMLInputElement>(`#${CSS.escape(id)}`);
+    if (el && el.value !== value) el.value = value;
+  }
+}
+
+let renderTimer: ReturnType<typeof setTimeout> | null = null;
+/** Debounced render for high-frequency relay events. */
+function scheduleRender() {
+  if (renderTimer) return;
+  renderTimer = setTimeout(() => {
+    renderTimer = null;
+    render();
+  }, 250);
 }
 
 function renderHeader(): string {
@@ -343,15 +406,58 @@ function renderCommunity(): string {
 }
 
 function renderFeedItem(item: FeedItem): string {
-  const prof = state.profiles.get(item.pubkey);
-  const name = prof?.name || shortNpub(item.pubkey);
-  const initial = (name[0] || "?").toUpperCase();
-  const avatar = prof?.picture
-    ? `<img src="${esc(prof.picture)}" alt="" />`
-    : esc(initial);
+  const name = state.profiles.get(item.pubkey)?.name || shortNpub(item.pubkey);
+  const likes = state.reactions.get(item.id) ?? new Set();
+  const liked = !!state.identity && likes.has(state.identity.pubkey);
+  const threadReplies = (state.replies.get(item.id) ?? [])
+    .slice()
+    .sort((a, b) => a.created_at - b.created_at);
+  const showReplies = state.expanded.has(item.id);
+  const composerOpen = state.openReply === item.id;
+
   return `
     <div class="feed-item">
-      <div class="avatar">${avatar}</div>
+      <div class="avatar">${avatar(item.pubkey, name)}</div>
+      <div class="body">
+        <div><span class="who">${esc(name)}</span><span class="when">${timeAgo(item.created_at)}</span></div>
+        <p class="txt">${esc(item.content)}</p>
+        <div class="actions-row">
+          <button class="act ${liked ? "liked" : ""}" data-action="like" data-id="${item.id}" data-pubkey="${item.pubkey}">
+            ♥ <span>${likes.size || ""}</span>
+          </button>
+          <button class="act" data-action="toggle-reply" data-id="${item.id}">
+            💬 <span>reply</span>
+          </button>
+          ${
+            threadReplies.length
+              ? `<button class="act" data-action="toggle-replies" data-id="${item.id}">
+                   ${showReplies ? "hide" : "view"} ${threadReplies.length} ${threadReplies.length === 1 ? "reply" : "replies"}
+                 </button>`
+              : ""
+          }
+        </div>
+        ${
+          composerOpen
+            ? `<div class="reply-box">
+                 <textarea id="reply-${item.id}" rows="2" placeholder="Write a reply…"></textarea>
+                 <button class="btn secondary" data-action="send-reply" data-id="${item.id}" data-pubkey="${item.pubkey}" style="margin-top:8px">Reply</button>
+               </div>`
+            : ""
+        }
+        ${
+          showReplies && threadReplies.length
+            ? `<div class="thread">${threadReplies.map(renderReply).join("")}</div>`
+            : ""
+        }
+      </div>
+    </div>`;
+}
+
+function renderReply(item: FeedItem): string {
+  const name = state.profiles.get(item.pubkey)?.name || shortNpub(item.pubkey);
+  return `
+    <div class="feed-item reply">
+      <div class="avatar sm">${avatar(item.pubkey, name)}</div>
       <div class="body">
         <div><span class="who">${esc(name)}</span><span class="when">${timeAgo(item.created_at)}</span></div>
         <p class="txt">${esc(item.content)}</p>
@@ -478,6 +584,23 @@ async function onClick(e: MouseEvent) {
     case "post-message":
       await postNote(val("#community-text"), false);
       break;
+    case "like":
+      await likePost(target.dataset.id!, target.dataset.pubkey!);
+      break;
+    case "toggle-reply":
+      state.openReply = state.openReply === target.dataset.id ? null : target.dataset.id!;
+      render();
+      break;
+    case "send-reply":
+      await sendReply(target.dataset.id!, target.dataset.pubkey!);
+      break;
+    case "toggle-replies": {
+      const id = target.dataset.id!;
+      if (state.expanded.has(id)) state.expanded.delete(id);
+      else state.expanded.add(id);
+      render();
+      break;
+    }
     case "save-settings":
       saveSettings();
       break;
@@ -503,7 +626,14 @@ async function onClick(e: MouseEvent) {
         state.identity = null;
         state.data = loadLocalData();
         state.feedUnsub?.();
+        state.interactionsUnsub?.();
         state.feedUnsub = null;
+        state.interactionsUnsub = null;
+        state.feed = [];
+        state.reactions.clear();
+        state.replies.clear();
+        state.expanded.clear();
+        state.openReply = null;
         render();
       }
       break;
@@ -528,6 +658,7 @@ async function login(
     render();
     toast(isNew ? "New Nostr key created 🎉" : "Welcome back");
     backgroundSync();
+    loadSelfProfile();
   } catch (err) {
     toast((err as Error).message || "Could not log in");
   }
@@ -578,23 +709,97 @@ async function postNote(text: string, isCheckin: boolean) {
       content: body + suffix
     });
     toast("Posted to #dryjuly 🎉");
-    const ta = root.querySelector<HTMLTextAreaElement>(
-      isCheckin ? "#share-text" : "#community-text"
-    );
+    const id = isCheckin ? "share-text" : "community-text";
+    const ta = root.querySelector<HTMLTextAreaElement>(`#${id}`);
     if (ta) ta.value = "";
+    delete state.drafts[id];
   } catch {
     toast("Couldn't reach relays — try again");
   }
+}
+
+async function likePost(id: string, pubkey: string) {
+  if (!state.identity) return;
+  const set = state.reactions.get(id) ?? new Set<string>();
+  if (set.has(state.identity.pubkey)) return; // already liked
+  set.add(state.identity.pubkey); // optimistic
+  state.reactions.set(id, set);
+  render();
+  try {
+    await react(state.identity, { id, pubkey });
+  } catch {
+    toast("Couldn't reach relays — try again");
+  }
+}
+
+async function sendReply(id: string, pubkey: string) {
+  if (!state.identity) return;
+  const draftId = `reply-${id}`;
+  const body = val(`#${CSS.escape(draftId)}`).trim();
+  if (!body) {
+    toast("Write a reply first");
+    return;
+  }
+  try {
+    const event = await reply(state.identity, { id, pubkey }, body);
+    // Optimistically show our own reply.
+    addReply(id, {
+      id: event.id,
+      pubkey: event.pubkey,
+      content: body,
+      created_at: event.created_at
+    });
+    state.openReply = null;
+    state.expanded.add(id);
+    delete state.drafts[draftId];
+    render();
+    toast("Reply posted 🎉");
+  } catch {
+    toast("Couldn't reach relays — try again");
+  }
+}
+
+function addReply(targetId: string, item: FeedItem) {
+  const list = state.replies.get(targetId) ?? [];
+  if (list.some((r) => r.id === item.id)) return;
+  list.push(item);
+  state.replies.set(targetId, list);
 }
 
 function startFeed() {
   state.feedUnsub = subscribeFeed((item) => {
     if (state.feed.some((f) => f.id === item.id)) return;
     state.feed.push(item);
-    // Refresh profiles for new authors, then re-render if on community view.
-    if (state.view === "community") render();
+    if (state.view === "community") scheduleRender();
     queueProfileFetch();
+    refreshInteractions();
   });
+}
+
+/** (Re)subscribe to likes & replies for the posts currently in the feed. */
+let interactionsTimer: ReturnType<typeof setTimeout> | null = null;
+function refreshInteractions() {
+  if (interactionsTimer) return;
+  interactionsTimer = setTimeout(() => {
+    interactionsTimer = null;
+    const ids = state.feed.map((f) => f.id);
+    if (ids.length === 0) return;
+    state.interactionsUnsub?.();
+    state.interactionsUnsub = subscribeInteractions(ids, {
+      like(targetId, pk) {
+        const set = state.reactions.get(targetId) ?? new Set<string>();
+        if (set.has(pk)) return;
+        set.add(pk);
+        state.reactions.set(targetId, set);
+        if (state.view === "community") scheduleRender();
+      },
+      reply(targetId, item) {
+        addReply(targetId, item);
+        queueProfileFetch();
+        if (state.view === "community") scheduleRender();
+      }
+    });
+  }, 1000);
 }
 
 let profileTimer: ReturnType<typeof setTimeout> | null = null;
@@ -602,13 +807,14 @@ function queueProfileFetch() {
   if (profileTimer) return;
   profileTimer = setTimeout(async () => {
     profileTimer = null;
-    const missing = [
-      ...new Set(state.feed.map((f) => f.pubkey))
-    ].filter((p) => !state.profiles.has(p));
+    const authors = new Set<string>();
+    state.feed.forEach((f) => authors.add(f.pubkey));
+    state.replies.forEach((list) => list.forEach((r) => authors.add(r.pubkey)));
+    const missing = [...authors].filter((p) => !state.profiles.has(p));
     if (missing.length === 0) return;
     const fetched = await fetchProfiles(missing);
     fetched.forEach((v, k) => state.profiles.set(k, v));
-    if (state.view === "community") render();
+    if (state.view === "community") scheduleRender();
   }, 800);
 }
 

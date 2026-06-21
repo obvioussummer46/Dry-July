@@ -319,6 +319,45 @@ button {
   overflow-wrap: anywhere;
 }
 
+.actions-row {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+}
+.act {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  padding: 2px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.act.liked {
+  color: var(--danger);
+}
+.act:active {
+  opacity: 0.6;
+}
+.reply-box {
+  margin-top: 10px;
+}
+.thread {
+  margin-top: 10px;
+  padding-left: 12px;
+  border-left: 2px solid var(--line);
+}
+.feed-item.reply {
+  padding: 8px 0;
+}
+.avatar.sm {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  font-size: 13px;
+}
+
 /* ---------- Forms ---------- */
 label.field {
   display: block;
