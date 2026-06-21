@@ -98,6 +98,36 @@ export function shortNpub(pubkey: string): string {
   return `${n.slice(0, 12)}…${n.slice(-6)}`;
 }
 
+/** Parse an npub (bech32) or 64-char hex string into a hex pubkey. */
+export function pubkeyFromInput(input: string): string {
+  const t = input.trim();
+  if (t.startsWith("npub")) {
+    const decoded = nip19.decode(t);
+    if (decoded.type !== "npub") throw new Error("Not a valid npub");
+    return decoded.data;
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(t)) return t.toLowerCase();
+  throw new Error("Enter a valid npub or hex pubkey");
+}
+
+/** Read another user's public NIP-78 dry-day list, or null. */
+export async function fetchAppDays(
+  pubkey: string,
+  relays = activeRelays
+): Promise<string[] | null> {
+  const event = await fetchLatest(
+    { kinds: [APP_DATA_KIND], authors: [pubkey], "#d": [APP_DATA_D] },
+    relays
+  );
+  if (!event) return null;
+  try {
+    const parsed = JSON.parse(event.content) as { days?: string[] };
+    return parsed.days ?? [];
+  } catch {
+    return null;
+  }
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
@@ -156,14 +186,15 @@ export type FeedItem = {
   created_at: number;
 };
 
-/** Subscribe to the community feed (top-level posts only). */
+/** Subscribe to a hashtag's community feed (top-level posts only). */
 export function subscribeFeed(
   onEvent: (item: FeedItem) => void,
+  tag = DRY_JULY_TAG,
   relays = activeRelays
 ): () => void {
   const sub = pool.subscribeMany(
     relays,
-    { kinds: [1], "#t": [DRY_JULY_TAG], limit: 50 },
+    { kinds: [1], "#t": [tag], limit: 50 },
     {
       onevent(e) {
         // Skip replies — they surface threaded under their parent instead.

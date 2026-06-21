@@ -15,6 +15,21 @@
   --safe-top: env(safe-area-inset-top, 0px);
 }
 
+:root[data-theme="light"] {
+  --bg: #f4f6fc;
+  --bg-soft: #ffffff;
+  --card: #ffffff;
+  --card-2: #eef1fa;
+  --line: #d9deef;
+  --text: #131a2e;
+  --muted: #5b678a;
+  --accent: #16a34a;
+  --accent-2: #0284c7;
+  --danger: #e11d48;
+  --gold: #d97706;
+  --glow: #dbe6ff;
+}
+
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;
@@ -29,7 +44,7 @@ body {
 
 body {
   background:
-    radial-gradient(1200px 600px at 50% -10%, #16224a 0%, transparent 60%),
+    radial-gradient(1200px 600px at 50% -10%, var(--glow, #16224a) 0%, transparent 60%),
     var(--bg);
   color: var(--text);
   font-family:
@@ -229,6 +244,131 @@ button {
   color: var(--accent-2);
 }
 
+/* ---------- Badges ---------- */
+.badges {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.badge {
+  text-align: center;
+  padding: 10px 4px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+.badge.earned {
+  opacity: 1;
+  filter: none;
+  border-color: var(--gold);
+  background: linear-gradient(180deg, var(--card-2), var(--card));
+}
+.badge .ic {
+  font-size: 22px;
+}
+.badge .bd {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.card.slip {
+  border-color: var(--gold);
+  background: linear-gradient(180deg, #2a2438, var(--bg-soft));
+}
+
+/* ---------- Trend & progress ---------- */
+.trend {
+  display: flex;
+  align-items: flex-end;
+  gap: 5px;
+  height: 56px;
+}
+.trend-bar {
+  flex: 1;
+  height: 30%;
+  border-radius: 5px;
+  background: var(--line);
+}
+.trend-bar.on {
+  height: 100%;
+  background: linear-gradient(180deg, #5ef295, var(--accent));
+}
+.bar {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--line);
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
+  transition: width 0.4s ease;
+}
+
+/* ---------- Buddies & leaderboard ---------- */
+.buddy-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.buddy-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 5px 6px 5px 12px;
+  font-size: 13px;
+}
+.buddy-chip button {
+  background: var(--line);
+  border: none;
+  color: var(--text);
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  line-height: 1;
+  font-size: 14px;
+}
+.leaderboard {
+  margin-top: 12px;
+}
+.lb-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--line);
+}
+.lb-row:last-child {
+  border-bottom: none;
+}
+.lb-row.self {
+  font-weight: 700;
+}
+.lb-rank {
+  width: 22px;
+  text-align: center;
+  color: var(--muted);
+  font-weight: 700;
+}
+.lb-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb-val {
+  color: var(--accent);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ---------- Calendar ---------- */
 .cal {
   display: grid;
@@ -268,6 +408,31 @@ button {
 }
 .cal .cell.future {
   opacity: 0.45;
+}
+
+/* ---------- Segmented control ---------- */
+.segment {
+  display: flex;
+  gap: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 5px;
+  margin-bottom: 14px;
+}
+.segment button {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 9px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.segment button.active {
+  background: var(--card-2);
+  color: var(--text);
 }
 
 /* ---------- Feed ---------- */

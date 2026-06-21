@@ -21,17 +21,24 @@ Real encouragement with sats — the most nostr-true feature.
 - [x] Fetch invoice + pay via WebLN
 - [x] Show zap totals on feed posts (kind 9735 receipts, sats from bolt11)
 
-## Milestone 3 — Reminders & retention
-- [ ] Daily check-in reminder via Web Push (needs VAPID keys + a serverless
-      push endpoint — does not work fully client-only)
-- [ ] Milestone badges (7/14/30/90 days), optionally as NIP-58 badges
-- [ ] Supportive "I slipped" reset flow (keep longest streak, reset current)
+## Milestone 3 — Reminders & retention ✅
+- [x] Milestone badges (1/3/7/14/21/31/60/90 days) with unlock celebration
+- [x] Supportive "I slipped" card (keeps longest streak, encourages a restart)
+- [x] Daily reminder toggle (local 8pm nudge while the app is open)
+- [~] Full background Web Push is deferred — it needs VAPID keys + a serverless
+      push endpoint, so it can't ship in a static client-only PWA.
 
-## Milestone 4 — Flexibility & depth
-- [ ] Custom challenge length (Dry January, 90 days, rolling goals)
-- [ ] Multi-relay management UI (add/remove/status)
-- [ ] Follow / accountability buddies + buddy leaderboard
-- [ ] Richer stats (mood/cravings, trend charts, savings goals)
-- [ ] Mocktail/recipe sub-feed (`#dryjuly` + `#mocktail`)
-- [ ] Data export/import (JSON), QR code for your npub
-- [ ] Light mode + theming
+## Milestone 4 — Flexibility & depth ✅
+- [x] Custom challenge (title, start date, length — Dry January, 90 days, etc.)
+- [x] Multi-relay management UI (edit list, live reconnect, defaults fallback)
+- [x] Follow / accountability buddies + buddy leaderboard (reads public NIP-78)
+- [x] Richer stats — 14-day trend sparkline + savings-goal progress bar
+- [x] Mocktail/recipe sub-feed (`#mocktail`, cross-posted with `#dryjuly`)
+- [x] Data export/import (JSON merge) + copy npub for sharing
+- [x] Light mode + theming
+
+## Later (nice-to-have)
+- [ ] Per-day mood / craving journaling
+- [ ] On-device QR rendering for npub
+- [ ] NIP-58 badge events for milestones
+- [ ] Background push via a small serverless relay
