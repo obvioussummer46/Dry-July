@@ -5,6 +5,7 @@ import {
   fetchProfiles,
   hasExtension,
   identityFromSecret,
+  hasWebln,
   npub,
   nsec,
   publish,
@@ -13,6 +14,7 @@ import {
   shortNpub,
   subscribeFeed,
   subscribeInteractions,
+  zap,
   type FeedItem,
   type Identity
 } from "./nostr";
@@ -42,8 +44,11 @@ interface State {
   interactionsUnsub: (() => void) | null;
   reactions: Map<string, Set<string>>;
   replies: Map<string, FeedItem[]>;
+  zaps: Map<string, number>;
+  zapReceipts: Set<string>;
   expanded: Set<string>;
   openReply: string | null;
+  openZap: string | null;
   drafts: Record<string, string>;
   revealKey: boolean;
 }
@@ -59,8 +64,11 @@ const state: State = {
   interactionsUnsub: null,
   reactions: new Map(),
   replies: new Map(),
+  zaps: new Map(),
+  zapReceipts: new Set(),
   expanded: new Set(),
   openReply: null,
+  openZap: null,
   drafts: {},
   revealKey: false
 };
@@ -414,6 +422,8 @@ function renderFeedItem(item: FeedItem): string {
     .sort((a, b) => a.created_at - b.created_at);
   const showReplies = state.expanded.has(item.id);
   const composerOpen = state.openReply === item.id;
+  const zapOpen = state.openZap === item.id;
+  const sats = state.zaps.get(item.id) ?? 0;
 
   return `
     <div class="feed-item">
@@ -428,6 +438,9 @@ function renderFeedItem(item: FeedItem): string {
           <button class="act" data-action="toggle-reply" data-id="${item.id}">
             💬 <span>reply</span>
           </button>
+          <button class="act ${sats ? "zapped" : ""}" data-action="toggle-zap" data-id="${item.id}">
+            ⚡ <span>${sats ? sats.toLocaleString() : "zap"}</span>
+          </button>
           ${
             threadReplies.length
               ? `<button class="act" data-action="toggle-replies" data-id="${item.id}">
@@ -436,6 +449,18 @@ function renderFeedItem(item: FeedItem): string {
               : ""
           }
         </div>
+        ${
+          zapOpen
+            ? `<div class="zap-box">
+                 ${[21, 100, 500, 2100]
+                   .map(
+                     (a) =>
+                       `<button class="zap-amt" data-action="zap-send" data-id="${item.id}" data-pubkey="${item.pubkey}" data-sats="${a}">⚡ ${a}</button>`
+                   )
+                   .join("")}
+               </div>`
+            : ""
+        }
         ${
           composerOpen
             ? `<div class="reply-box">
@@ -601,6 +626,21 @@ async function onClick(e: MouseEvent) {
       render();
       break;
     }
+    case "toggle-zap":
+      if (!hasWebln()) {
+        toast("Install a Lightning (WebLN) wallet to zap");
+        break;
+      }
+      state.openZap = state.openZap === target.dataset.id ? null : target.dataset.id!;
+      render();
+      break;
+    case "zap-send":
+      await zapPost(
+        target.dataset.id!,
+        target.dataset.pubkey!,
+        Number(target.dataset.sats)
+      );
+      break;
     case "save-settings":
       saveSettings();
       break;
@@ -632,8 +672,11 @@ async function onClick(e: MouseEvent) {
         state.feed = [];
         state.reactions.clear();
         state.replies.clear();
+        state.zaps.clear();
+        state.zapReceipts.clear();
         state.expanded.clear();
         state.openReply = null;
+        state.openZap = null;
         render();
       }
       break;
@@ -732,6 +775,19 @@ async function likePost(id: string, pubkey: string) {
   }
 }
 
+async function zapPost(id: string, pubkey: string, sats: number) {
+  if (!state.identity) return;
+  state.openZap = null;
+  render();
+  toast(`Requesting ⚡ ${sats} sats…`);
+  try {
+    await zap(state.identity, { id, pubkey }, sats);
+    toast(`Zapped ⚡ ${sats} sats!`);
+  } catch (err) {
+    toast((err as Error).message || "Zap failed");
+  }
+}
+
 async function sendReply(id: string, pubkey: string) {
   if (!state.identity) return;
   const draftId = `reply-${id}`;
@@ -796,6 +852,12 @@ function refreshInteractions() {
       reply(targetId, item) {
         addReply(targetId, item);
         queueProfileFetch();
+        if (state.view === "community") scheduleRender();
+      },
+      zap(targetId, receiptId, sats) {
+        if (state.zapReceipts.has(receiptId)) return;
+        state.zapReceipts.add(receiptId);
+        state.zaps.set(targetId, (state.zaps.get(targetId) ?? 0) + sats);
         if (state.view === "community") scheduleRender();
       }
     });

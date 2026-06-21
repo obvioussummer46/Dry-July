@@ -13,13 +13,13 @@ Make the feed two-way instead of a broadcast wall.
 - [x] Self profile: load own `kind 0` (avatar + name) for header/profile
 - [x] Draft preservation so incoming feed events don't wipe what you're typing
 
-## Milestone 2 — Zaps ⚡ (next)
+## Milestone 2 — Zaps ⚡ ✅
 Real encouragement with sats — the most nostr-true feature.
-- [ ] Detect WebLN provider
-- [ ] Build NIP-57 zap requests
-- [ ] Resolve recipient LNURL from their `kind 0` (`lud16`/`lud06`)
-- [ ] Fetch invoice + pay via WebLN
-- [ ] Show zap totals on feed posts and milestones
+- [x] Detect WebLN provider
+- [x] Build NIP-57 zap requests
+- [x] Resolve recipient LNURL from their `kind 0` (`lud16`/`lud06`)
+- [x] Fetch invoice + pay via WebLN
+- [x] Show zap totals on feed posts (kind 9735 receipts, sats from bolt11)
 
 ## Milestone 3 — Reminders & retention
 - [ ] Daily check-in reminder via Web Push (needs VAPID keys + a serverless

@@ -337,8 +337,29 @@ button {
 .act.liked {
   color: var(--danger);
 }
+.act.zapped {
+  color: var(--gold);
+}
 .act:active {
   opacity: 0.6;
+}
+.zap-box {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+.zap-amt {
+  background: var(--card-2);
+  border: 1px solid var(--gold);
+  color: var(--gold);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 700;
+}
+.zap-amt:active {
+  transform: scale(0.96);
 }
 .reply-box {
   margin-top: 10px;
