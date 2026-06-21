@@ -1,4 +1,4 @@
-import type { AppData } from "./store";
+import type { AppData, Challenge } from "./store";
 
 /** Format a Date as a local YYYY-MM-DD string. */
 export function isoDate(d: Date): string {
@@ -24,11 +24,45 @@ export interface Stats {
   longestStreak: number;
   moneySaved: number;
   caloriesSaved: number;
-  julyDays: number;
+  challengeDays: number;
+  challengeLength: number;
 }
 
 /** The number of days in July of the given year. */
 export const JULY_DAYS = 31;
+
+export interface Badge {
+  days: number;
+  label: string;
+  icon: string;
+  earned: boolean;
+}
+
+const BADGE_TIERS: { days: number; label: string; icon: string }[] = [
+  { days: 1, label: "Day one", icon: "🌱" },
+  { days: 3, label: "Three days", icon: "🌿" },
+  { days: 7, label: "One week", icon: "⭐" },
+  { days: 14, label: "Two weeks", icon: "🔥" },
+  { days: 21, label: "Habit formed", icon: "💪" },
+  { days: 31, label: "Dry July!", icon: "🏆" },
+  { days: 60, label: "Two months", icon: "💎" },
+  { days: 90, label: "90 days", icon: "👑" }
+];
+
+/** Badges keyed off the best streak achieved so far. */
+export function badges(stats: Stats): Badge[] {
+  return BADGE_TIERS.map((t) => ({
+    ...t,
+    earned: stats.longestStreak >= t.days
+  }));
+}
+
+/** The highest badge-day threshold currently earned (0 if none). */
+export function topBadgeDays(stats: Stats): number {
+  return badges(stats)
+    .filter((b) => b.earned)
+    .reduce((max, b) => Math.max(max, b.days), 0);
+}
 
 export function computeStats(data: AppData): Stats {
   const set = new Set(data.days);
@@ -62,9 +96,8 @@ export function computeStats(data: AppData): Stats {
   const moneySaved = total * drinksPerDay * costPerDrink;
   const caloriesSaved = total * drinksPerDay * caloriesPerDrink;
 
-  const year = new Date().getFullYear();
-  const julyPrefix = `${year}-07-`;
-  const julyDays = [...set].filter((d) => d.startsWith(julyPrefix)).length;
+  const challengeSet = new Set(challengeGrid(data.challenge).map((c) => c.iso));
+  const challengeDays = [...set].filter((d) => challengeSet.has(d)).length;
 
   return {
     total,
@@ -72,22 +105,42 @@ export function computeStats(data: AppData): Stats {
     longestStreak: longest,
     moneySaved,
     caloriesSaved,
-    julyDays
+    challengeDays,
+    challengeLength: data.challenge.length
   };
 }
 
-/** Build the calendar grid for July of the current year. */
-export function julyGrid(year: number): { iso: string; dom: number }[] {
+/** Build the calendar grid for a challenge window. */
+export function challengeGrid(
+  challenge: Challenge
+): { iso: string; dom: number }[] {
+  const [y, m, d] = challenge.start.split("-").map(Number);
   const cells: { iso: string; dom: number }[] = [];
-  for (let day = 1; day <= JULY_DAYS; day++) {
-    const date = new Date(year, 6, day); // month 6 = July
-    cells.push({ iso: isoDate(date), dom: day });
+  for (let i = 0; i < challenge.length; i++) {
+    const date = new Date(y, m - 1, d + i);
+    cells.push({ iso: isoDate(date), dom: date.getDate() });
   }
   return cells;
 }
 
-/** Weekday index (0=Mon … 6=Sun) of July 1st, for grid alignment. */
-export function julyStartOffset(year: number): number {
-  const first = new Date(year, 6, 1).getDay(); // 0=Sun
+/** Last N days as {iso, on} ending today — for a trend sparkline. */
+export function recentTrend(
+  days: string[],
+  n = 14
+): { iso: string; on: boolean }[] {
+  const set = new Set(days);
+  const out: { iso: string; on: boolean }[] = [];
+  const today = todayIso();
+  for (let i = n - 1; i >= 0; i--) {
+    const iso = addDays(today, -i);
+    out.push({ iso, on: set.has(iso) });
+  }
+  return out;
+}
+
+/** Weekday index (0=Mon … 6=Sun) of the challenge start, for grid alignment. */
+export function challengeStartOffset(challenge: Challenge): number {
+  const [y, m, d] = challenge.start.split("-").map(Number);
+  const first = new Date(y, m - 1, d).getDay(); // 0=Sun
   return (first + 6) % 7; // shift so Monday = 0
 }

@@ -22,12 +22,48 @@ export interface Settings {
   caloriesPerDrink: number;
   /** Optional display name shown alongside check-ins. */
   displayName: string;
+  /** Optional money-saved goal (0 = no goal). */
+  savingsGoal: number;
+  /** Whether daily check-in reminders are enabled. */
+  reminders: boolean;
+  /** Top badge (in days) the user has already celebrated. */
+  lastBadgeSeen: number;
+  /** Custom relay list; empty means use defaults. */
+  relays: string[];
+  /** UI theme. */
+  theme: "dark" | "light";
+  /** Followed buddy pubkeys (hex) for the leaderboard. */
+  buddies: string[];
+}
+
+/** A configurable challenge — defaults to Dry July of the current year. */
+export interface Challenge {
+  title: string;
+  /** Inclusive start date (YYYY-MM-DD). */
+  start: string;
+  /** Length in days. */
+  length: number;
+}
+
+/** Optional per-day reflection. */
+export interface JournalEntry {
+  /** Mood 1 (rough) … 5 (great). */
+  mood?: number;
+  /** Craving 1 (none) … 5 (strong). */
+  craving?: number;
+  /** Free-text note. */
+  note?: string;
+  /** When this entry was last edited (ms) — used for sync conflict resolution. */
+  updatedAt?: number;
 }
 
 export interface AppData {
   /** ISO dates (YYYY-MM-DD) the user logged as alcohol-free. */
   days: string[];
   settings: Settings;
+  challenge: Challenge;
+  /** Per-day reflections keyed by ISO date. */
+  journal: Record<string, JournalEntry>;
   updatedAt: number;
 }
 
@@ -36,11 +72,29 @@ export const DEFAULT_SETTINGS: Settings = {
   costPerDrink: 8,
   currency: "$",
   caloriesPerDrink: 150,
-  displayName: ""
+  displayName: "",
+  savingsGoal: 0,
+  reminders: false,
+  lastBadgeSeen: 0,
+  relays: [],
+  theme: "dark",
+  buddies: []
 };
 
+/** Dry July of the current year. */
+export function defaultChallenge(): Challenge {
+  const year = new Date().getFullYear();
+  return { title: "Dry July", start: `${year}-07-01`, length: 31 };
+}
+
 export function emptyData(): AppData {
-  return { days: [], settings: { ...DEFAULT_SETTINGS }, updatedAt: 0 };
+  return {
+    days: [],
+    settings: { ...DEFAULT_SETTINGS },
+    challenge: defaultChallenge(),
+    journal: {},
+    updatedAt: 0
+  };
 }
 
 /* ---------- Identity persistence ---------- */
@@ -90,6 +144,8 @@ export function loadLocalData(): AppData {
     return {
       days: parsed.days ?? [],
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
+      challenge: { ...defaultChallenge(), ...(parsed.challenge ?? {}) },
+      journal: parsed.journal ?? {},
       updatedAt: parsed.updatedAt ?? 0
     };
   } catch {
@@ -117,6 +173,8 @@ export async function syncFromNostr(
     const merged = mergeData(local, {
       days: remote.days ?? [],
       settings: { ...DEFAULT_SETTINGS, ...(remote.settings ?? {}) },
+      challenge: { ...defaultChallenge(), ...(remote.challenge ?? {}) },
+      journal: remote.journal ?? {},
       updatedAt: event.created_at * 1000
     });
     saveLocalData(merged);
@@ -126,15 +184,32 @@ export async function syncFromNostr(
   }
 }
 
-/** Merge two data sets: union of days, newest settings win. */
+/** Merge two data sets: union of days, newest settings/challenge win. */
 export function mergeData(a: AppData, b: AppData): AppData {
   const days = Array.from(new Set([...a.days, ...b.days])).sort();
   const newest = a.updatedAt >= b.updatedAt ? a : b;
   return {
     days,
     settings: newest.settings,
+    challenge: newest.challenge,
+    journal: mergeJournal(a.journal, b.journal),
     updatedAt: Math.max(a.updatedAt, b.updatedAt)
   };
+}
+
+/** Merge journals per date, keeping the most recently edited entry. */
+function mergeJournal(
+  a: Record<string, JournalEntry> = {},
+  b: Record<string, JournalEntry> = {}
+): Record<string, JournalEntry> {
+  const out: Record<string, JournalEntry> = { ...a };
+  for (const [date, entry] of Object.entries(b)) {
+    const existing = out[date];
+    if (!existing || (entry.updatedAt ?? 0) >= (existing.updatedAt ?? 0)) {
+      out[date] = entry;
+    }
+  }
+  return out;
 }
 
 /** Persist app data to Nostr as a NIP-78 replaceable event. */
@@ -146,6 +221,11 @@ export async function pushToNostr(
     kind: APP_DATA_KIND,
     created_at: Math.floor(Date.now() / 1000),
     tags: [["d", APP_DATA_D]],
-    content: JSON.stringify({ days: data.days, settings: data.settings })
+    content: JSON.stringify({
+      days: data.days,
+      settings: data.settings,
+      challenge: data.challenge,
+      journal: data.journal
+    })
   });
 }

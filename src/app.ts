@@ -2,17 +2,22 @@ import {
   connectExtension,
   createLocalIdentity,
   DRY_JULY_TAG,
+  fetchAppDays,
   fetchProfiles,
   hasExtension,
   identityFromSecret,
+  pubkeyFromInput,
+  hasWebln,
   npub,
   nsec,
   publish,
   react,
   reply,
+  setRelays,
   shortNpub,
   subscribeFeed,
   subscribeInteractions,
+  zap,
   type FeedItem,
   type Identity
 } from "./nostr";
@@ -26,8 +31,17 @@ import {
   syncFromNostr,
   type AppData
 } from "./store";
-import { computeStats, julyGrid, julyStartOffset, todayIso } from "./stats";
+import {
+  badges,
+  challengeGrid,
+  challengeStartOffset,
+  computeStats,
+  recentTrend,
+  todayIso,
+  topBadgeDays
+} from "./stats";
 import { icons, logoSvg } from "./icons";
+import QRCode from "qrcode";
 
 type View = "today" | "calendar" | "community" | "profile";
 
@@ -42,10 +56,24 @@ interface State {
   interactionsUnsub: (() => void) | null;
   reactions: Map<string, Set<string>>;
   replies: Map<string, FeedItem[]>;
+  zaps: Map<string, number>;
+  zapReceipts: Set<string>;
   expanded: Set<string>;
   openReply: string | null;
+  openZap: string | null;
   drafts: Record<string, string>;
+  leaderboard: LeaderEntry[];
+  leaderboardLoading: boolean;
+  feedTag: "dryjuly" | "mocktail";
   revealKey: boolean;
+}
+
+interface LeaderEntry {
+  pubkey: string;
+  name: string;
+  challengeDays: number;
+  longestStreak: number;
+  isSelf: boolean;
 }
 
 const state: State = {
@@ -59,9 +87,15 @@ const state: State = {
   interactionsUnsub: null,
   reactions: new Map(),
   replies: new Map(),
+  zaps: new Map(),
+  zapReceipts: new Set(),
   expanded: new Set(),
   openReply: null,
+  openZap: null,
   drafts: {},
+  leaderboard: [],
+  leaderboardLoading: false,
+  feedTag: "dryjuly",
   revealKey: false
 };
 
@@ -77,11 +111,47 @@ export function mount(el: HTMLElement) {
       state.drafts[el.id] = el.value;
     }
   });
+  applySettings();
   render();
   if (state.identity) {
     backgroundSync();
     loadSelfProfile();
+    scheduleReminder();
   }
+}
+
+/** Apply persisted settings that affect global state (theme + relays). */
+function applySettings() {
+  const s = state.data.settings;
+  document.documentElement.dataset.theme = s.theme;
+  setRelays(s.relays);
+}
+
+/** Best-effort daily reminder while the app is open (full background push
+ *  notifications require a server — see ROADMAP). */
+let reminderTimer: ReturnType<typeof setTimeout> | null = null;
+function scheduleReminder() {
+  if (reminderTimer) {
+    clearTimeout(reminderTimer);
+    reminderTimer = null;
+  }
+  if (!state.data.settings.reminders) return;
+  if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+
+  const now = new Date();
+  const target = new Date();
+  target.setHours(20, 0, 0, 0); // 8pm local
+  if (target <= now) target.setDate(target.getDate() + 1);
+
+  reminderTimer = setTimeout(() => {
+    if (!state.data.days.includes(todayIso())) {
+      new Notification("Dry July 🌿", {
+        body: "Have you stayed dry today? Tap to log your day.",
+        icon: "./icons/icon-192.png"
+      });
+    }
+    scheduleReminder(); // re-arm for the next day
+  }, target.getTime() - now.getTime());
 }
 
 /* ---------------- Helpers ---------------- */
@@ -285,8 +355,23 @@ function renderOnboard(): string {
 function renderToday(): string {
   const stats = computeStats(state.data);
   const checkedToday = state.data.days.includes(todayIso());
-  const pct = Math.min(100, (stats.julyDays / 31) * 100);
+  const len = stats.challengeLength || 31;
+  const pct = Math.min(100, (stats.challengeDays / len) * 100);
   const { currency } = state.data.settings;
+  const title = state.data.challenge.title;
+
+  // Supportive nudge when a streak has just been broken.
+  const slipCard =
+    !checkedToday && stats.currentStreak === 0 && stats.total > 0
+      ? `<div class="card slip">
+           <h2>One day at a time 💛</h2>
+           <p class="note" style="margin:0">
+             A slip isn't a failure — it's part of the journey. Your best streak of
+             <strong>${stats.longestStreak} ${stats.longestStreak === 1 ? "day" : "days"}</strong>
+             still counts. Log today and start a fresh one.
+           </p>
+         </div>`
+      : "";
 
   return `
     <div class="card hero" style="--pct:${pct}%">
@@ -310,12 +395,30 @@ function renderToday(): string {
       }
     </div>
 
+    ${slipCard}
+
     <div class="stats">
-      <div class="stat green"><div class="v">${stats.julyDays}<span class="muted" style="font-size:15px">/31</span></div><div class="k">July days dry</div></div>
+      <div class="stat green"><div class="v">${stats.challengeDays}<span class="muted" style="font-size:15px">/${len}</span></div><div class="k">${esc(title)} days</div></div>
       <div class="stat gold"><div class="v">${stats.longestStreak}</div><div class="k">Longest streak</div></div>
       <div class="stat blue"><div class="v">${currency}${stats.moneySaved.toLocaleString()}</div><div class="k">Money saved</div></div>
       <div class="stat"><div class="v">${stats.caloriesSaved.toLocaleString()}</div><div class="k">Calories avoided</div></div>
     </div>
+
+    <div class="card">
+      <h2>Milestones</h2>
+      <div class="badges">
+        ${badges(stats)
+          .map(
+            (b) => `<div class="badge ${b.earned ? "earned" : ""}" title="${b.label}">
+                      <div class="ic">${b.icon}</div>
+                      <div class="bd">${b.days}d</div>
+                    </div>`
+          )
+          .join("")}
+      </div>
+    </div>
+
+    ${renderJournalCard()}
 
     <div class="card">
       <h2>Share your win</h2>
@@ -325,12 +428,45 @@ function renderToday(): string {
     </div>`;
 }
 
+const MOODS = ["😣", "😕", "😐", "🙂", "😄"];
+
+function renderJournalCard(): string {
+  const today = todayIso();
+  const entry = state.data.journal[today] ?? {};
+  const moodBtns = MOODS.map(
+    (emoji, i) =>
+      `<button class="mood ${entry.mood === i + 1 ? "sel" : ""}" data-action="set-mood" data-val="${i + 1}">${emoji}</button>`
+  ).join("");
+  const cravingDots = [1, 2, 3, 4, 5]
+    .map(
+      (n) =>
+        `<button class="dot ${entry.craving && entry.craving >= n ? "on" : ""}" data-action="set-craving" data-val="${n}" aria-label="craving ${n}"></button>`
+    )
+    .join("");
+
+  return `
+    <div class="card">
+      <h2>How was today?</h2>
+      <p class="note" style="margin-top:0">Mood</p>
+      <div class="mood-row">${moodBtns}</div>
+      <div class="flex-between" style="margin-top:14px">
+        <p class="note" style="margin:0">Cravings</p>
+        <div class="dot-row">${cravingDots}</div>
+      </div>
+      <label class="field" style="margin-top:14px">
+        <span>Note (private, syncs to your Nostr account)</span>
+        <textarea id="journal-note" rows="2" placeholder="A win, a trigger, a thought…">${esc(entry.note ?? "")}</textarea>
+      </label>
+      <button class="btn secondary" data-action="save-journal">Save note</button>
+    </div>`;
+}
+
 /* ---- Calendar ---- */
 
 function renderCalendar(): string {
-  const year = new Date().getFullYear();
-  const grid = julyGrid(year);
-  const offset = julyStartOffset(year);
+  const challenge = state.data.challenge;
+  const grid = challengeGrid(challenge);
+  const offset = challengeStartOffset(challenge);
   const set = new Set(state.data.days);
   const today = todayIso();
   const dows = ["M", "T", "W", "T", "F", "S", "S"];
@@ -359,8 +495,8 @@ function renderCalendar(): string {
   return `
     <div class="card">
       <div class="flex-between" style="margin-bottom:14px">
-        <h2 style="margin:0">July ${year}</h2>
-        <span class="pill">${stats.julyDays} of 31 dry</span>
+        <h2 style="margin:0">${esc(challenge.title)}</h2>
+        <span class="pill">${stats.challengeDays} of ${stats.challengeLength} dry</span>
       </div>
       <div class="cal">
         ${dows.map((d) => `<div class="dow">${d}</div>`).join("")}
@@ -374,12 +510,63 @@ function renderCalendar(): string {
     <div class="stats">
       <div class="stat green"><div class="v">${stats.total}</div><div class="k">Total dry days</div></div>
       <div class="stat gold"><div class="v">${stats.currentStreak}</div><div class="k">Current streak</div></div>
+    </div>
+
+    ${renderTrendCard(stats)}`;
+}
+
+function renderTrendCard(stats: ReturnType<typeof computeStats>): string {
+  const trend = recentTrend(state.data.days, 14);
+  const bars = trend
+    .map(
+      (d) =>
+        `<div class="trend-bar ${d.on ? "on" : ""}" title="${d.iso}${d.on ? " · dry" : ""}"></div>`
+    )
+    .join("");
+
+  const { savingsGoal, currency } = state.data.settings;
+  const goalCard =
+    savingsGoal > 0
+      ? (() => {
+          const pct = Math.min(100, (stats.moneySaved / savingsGoal) * 100);
+          return `
+            <div style="margin-top:16px">
+              <div class="flex-between" style="margin-bottom:6px">
+                <span class="note" style="margin:0">Savings goal</span>
+                <span class="note" style="margin:0">${currency}${stats.moneySaved.toLocaleString()} / ${currency}${savingsGoal.toLocaleString()}</span>
+              </div>
+              <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+            </div>`;
+        })()
+      : "";
+
+  // Average mood across the last 14 logged reflections.
+  const moods = trend
+    .map((d) => state.data.journal[d.iso]?.mood)
+    .filter((m): m is number => typeof m === "number");
+  const avgMood = moods.length
+    ? MOODS[Math.round(moods.reduce((a, b) => a + b, 0) / moods.length) - 1]
+    : "";
+  const moodLine = moods.length
+    ? `<div class="flex-between" style="margin-top:14px">
+         <span class="note" style="margin:0">Avg mood (2 wks)</span>
+         <span style="font-size:20px">${avgMood}</span>
+       </div>`
+    : "";
+
+  return `
+    <div class="card">
+      <h2>Last 14 days</h2>
+      <div class="trend">${bars}</div>
+      ${moodLine}
+      ${goalCard}
     </div>`;
 }
 
 /* ---- Community ---- */
 
 function renderCommunity(): string {
+  const tag = state.feedTag;
   const items = state.feed
     .slice()
     .sort((a, b) => b.created_at - a.created_at)
@@ -389,15 +576,27 @@ function renderCommunity(): string {
     items.length === 0
       ? `<div class="center" style="padding:30px 0">
            <div class="spinner"></div>
-           <p class="muted">Listening for #dryjuly posts on Nostr…</p>
+           <p class="muted">Listening for #${tag} posts on Nostr…</p>
          </div>`
       : items.map(renderFeedItem).join("");
 
+  const seg = `
+    <div class="segment">
+      <button data-action="feed-tag" data-tag="dryjuly" class="${tag === "dryjuly" ? "active" : ""}">🌿 #dryjuly</button>
+      <button data-action="feed-tag" data-tag="mocktail" class="${tag === "mocktail" ? "active" : ""}">🍹 #mocktail</button>
+    </div>`;
+
+  const placeholder =
+    tag === "mocktail"
+      ? "Share a mocktail recipe or a 0% find…"
+      : "Share encouragement, a milestone, a tip…";
+
   return `
+    ${seg}
     <div class="card">
-      <h2>Cheer the crew on</h2>
-      <textarea id="community-text" rows="3" placeholder="Share encouragement, a milestone, a recipe…"></textarea>
-      <button class="btn" data-action="post-message" style="margin-top:10px">Post to #dryjuly</button>
+      <h2>${tag === "mocktail" ? "Share a mocktail" : "Cheer the crew on"}</h2>
+      <textarea id="community-text" rows="3" placeholder="${placeholder}"></textarea>
+      <button class="btn" data-action="post-message" style="margin-top:10px">Post to #${tag}</button>
     </div>
     <div class="card">
       <h2>Live feed</h2>
@@ -414,6 +613,8 @@ function renderFeedItem(item: FeedItem): string {
     .sort((a, b) => a.created_at - b.created_at);
   const showReplies = state.expanded.has(item.id);
   const composerOpen = state.openReply === item.id;
+  const zapOpen = state.openZap === item.id;
+  const sats = state.zaps.get(item.id) ?? 0;
 
   return `
     <div class="feed-item">
@@ -428,6 +629,9 @@ function renderFeedItem(item: FeedItem): string {
           <button class="act" data-action="toggle-reply" data-id="${item.id}">
             💬 <span>reply</span>
           </button>
+          <button class="act ${sats ? "zapped" : ""}" data-action="toggle-zap" data-id="${item.id}">
+            ⚡ <span>${sats ? sats.toLocaleString() : "zap"}</span>
+          </button>
           ${
             threadReplies.length
               ? `<button class="act" data-action="toggle-replies" data-id="${item.id}">
@@ -436,6 +640,18 @@ function renderFeedItem(item: FeedItem): string {
               : ""
           }
         </div>
+        ${
+          zapOpen
+            ? `<div class="zap-box">
+                 ${[21, 100, 500, 2100]
+                   .map(
+                     (a) =>
+                       `<button class="zap-amt" data-action="zap-send" data-id="${item.id}" data-pubkey="${item.pubkey}" data-sats="${a}">⚡ ${a}</button>`
+                   )
+                   .join("")}
+               </div>`
+            : ""
+        }
         ${
           composerOpen
             ? `<div class="reply-box">
@@ -467,9 +683,50 @@ function renderReply(item: FeedItem): string {
 
 /* ---- Profile ---- */
 
+function renderLeaderboard(): string {
+  const buddies = state.data.settings.buddies;
+  const refresh = `<button class="btn ghost" data-action="refresh-leaderboard" style="margin-top:10px">
+      ${state.leaderboardLoading ? "Loading…" : "Refresh leaderboard"}
+    </button>`;
+
+  if (buddies.length === 0) {
+    return `<p class="note" style="margin-bottom:0">No buddies yet — add one above.</p>`;
+  }
+
+  const rows =
+    state.leaderboard.length === 0
+      ? `<p class="note">Tap refresh to load the leaderboard.</p>`
+      : `<div class="leaderboard">
+           ${state.leaderboard
+             .map(
+               (e, i) => `
+               <div class="lb-row ${e.isSelf ? "self" : ""}">
+                 <span class="lb-rank">${i + 1}</span>
+                 <span class="lb-name">${esc(e.name)}${e.isSelf ? " (you)" : ""}</span>
+                 <span class="lb-val">${e.challengeDays}d · 🔥${e.longestStreak}</span>
+               </div>`
+             )
+             .join("")}
+         </div>`;
+
+  const list = `<div class="buddy-list">
+      ${buddies
+        .map(
+          (p) => `<div class="buddy-chip">
+                    ${esc(state.profiles.get(p)?.name || shortNpub(p))}
+                    <button data-action="remove-buddy" data-pubkey="${p}" aria-label="remove">×</button>
+                  </div>`
+        )
+        .join("")}
+    </div>`;
+
+  return `${list}${refresh}${rows}`;
+}
+
 function renderProfile(): string {
   const id = state.identity!;
   const s = state.data.settings;
+  const c = state.data.challenge;
   const stats = computeStats(state.data);
   return `
     <div class="card center">
@@ -515,7 +772,85 @@ function renderProfile(): string {
           <input id="set-cal" type="number" min="0" step="10" value="${s.caloriesPerDrink}" />
         </label>
       </div>
+      <label class="field">
+        <span>Savings goal (${esc(s.currency)}, 0 = none)</span>
+        <input id="set-goal" type="number" min="0" step="10" value="${s.savingsGoal}" />
+      </label>
       <button class="btn" data-action="save-settings">Save</button>
+    </div>
+
+    <div class="card">
+      <h2>Challenge</h2>
+      <p class="note" style="margin-top:0">Not July? Run any challenge — Dry January, 90 days, your call.</p>
+      <label class="field">
+        <span>Title</span>
+        <input id="set-ch-title" value="${esc(c.title)}" placeholder="Dry July" />
+      </label>
+      <div class="row">
+        <label class="field">
+          <span>Start date</span>
+          <input id="set-ch-start" type="date" value="${esc(c.start)}" />
+        </label>
+        <label class="field">
+          <span>Length (days)</span>
+          <input id="set-ch-length" type="number" min="1" max="366" value="${c.length}" />
+        </label>
+      </div>
+      <button class="btn" data-action="save-challenge">Save challenge</button>
+    </div>
+
+    <div class="card">
+      <h2>Reminders</h2>
+      <div class="flex-between">
+        <p class="note" style="margin:0;flex:1">
+          A daily 8pm nudge to log your day.
+          <br/><span class="muted">Fires while the app is open; full background push needs a server.</span>
+        </p>
+        <button class="btn ${s.reminders ? "done" : "secondary"}" data-action="toggle-reminders" style="width:auto;padding:10px 16px">
+          ${s.reminders ? "On" : "Off"}
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Buddies & leaderboard</h2>
+      <p class="note" style="margin-top:0">Follow friends by npub and compare streaks. Reads their public progress from Nostr.</p>
+      <label class="field">
+        <span>Add a buddy (npub or hex)</span>
+        <input id="buddy-npub" placeholder="npub1…" autocomplete="off" />
+      </label>
+      <button class="btn secondary" data-action="add-buddy">Add buddy</button>
+      ${renderLeaderboard()}
+    </div>
+
+    <div class="card">
+      <h2>Appearance</h2>
+      <div class="flex-between">
+        <p class="note" style="margin:0">Theme</p>
+        <button class="btn secondary" data-action="toggle-theme" style="width:auto;padding:10px 16px">
+          ${s.theme === "dark" ? "🌙 Dark" : "☀️ Light"}
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Relays</h2>
+      <p class="note" style="margin-top:0">One relay URL per line. Leave empty to use the defaults.</p>
+      <textarea id="set-relays" rows="4" placeholder="wss://relay.damus.io">${esc(
+        s.relays.join("\n")
+      )}</textarea>
+      <button class="btn" data-action="save-relays" style="margin-top:10px">Save relays</button>
+    </div>
+
+    <div class="card">
+      <h2>Your data</h2>
+      <button class="btn secondary" data-action="export-data">Export backup (JSON)</button>
+      <label class="field" style="margin-top:12px">
+        <span>Import backup (paste JSON)</span>
+        <textarea id="import-data" rows="3" placeholder='{"days":[…]}'></textarea>
+      </label>
+      <button class="btn ghost" data-action="import-data">Import & merge</button>
+      <button class="btn ghost" data-action="show-qr" style="margin-top:10px">Copy npub for sharing</button>
     </div>
 
     <div class="card">
@@ -575,6 +910,15 @@ async function onClick(e: MouseEvent) {
     case "check-in":
       toggleDay(todayIso());
       break;
+    case "set-mood":
+      setJournalField("mood", Number(target.dataset.val));
+      break;
+    case "set-craving":
+      setJournalField("craving", Number(target.dataset.val));
+      break;
+    case "save-journal":
+      saveJournalNote();
+      break;
     case "toggle-day":
       toggleDay(target.dataset.day!);
       break;
@@ -583,6 +927,9 @@ async function onClick(e: MouseEvent) {
       break;
     case "post-message":
       await postNote(val("#community-text"), false);
+      break;
+    case "feed-tag":
+      setFeedTag(target.dataset.tag as "dryjuly" | "mocktail");
       break;
     case "like":
       await likePost(target.dataset.id!, target.dataset.pubkey!);
@@ -601,8 +948,56 @@ async function onClick(e: MouseEvent) {
       render();
       break;
     }
+    case "toggle-zap":
+      if (!hasWebln()) {
+        toast("Install a Lightning (WebLN) wallet to zap");
+        break;
+      }
+      state.openZap = state.openZap === target.dataset.id ? null : target.dataset.id!;
+      render();
+      break;
+    case "zap-send":
+      await zapPost(
+        target.dataset.id!,
+        target.dataset.pubkey!,
+        Number(target.dataset.sats)
+      );
+      break;
     case "save-settings":
       saveSettings();
+      break;
+    case "save-challenge":
+      saveChallenge();
+      break;
+    case "toggle-reminders":
+      await toggleReminders();
+      break;
+    case "toggle-theme":
+      state.data.settings.theme = state.data.settings.theme === "dark" ? "light" : "dark";
+      applySettings();
+      persist();
+      render();
+      break;
+    case "save-relays":
+      saveRelays();
+      break;
+    case "add-buddy":
+      addBuddy(val("#buddy-npub"));
+      break;
+    case "remove-buddy":
+      removeBuddy(target.dataset.pubkey!);
+      break;
+    case "refresh-leaderboard":
+      await refreshLeaderboard();
+      break;
+    case "export-data":
+      exportData();
+      break;
+    case "import-data":
+      importData(val("#import-data"));
+      break;
+    case "show-qr":
+      await showQr();
       break;
     case "copy-npub":
       copy(npub(state.identity!.pubkey), "Public key copied");
@@ -632,8 +1027,11 @@ async function onClick(e: MouseEvent) {
         state.feed = [];
         state.reactions.clear();
         state.replies.clear();
+        state.zaps.clear();
+        state.zapReceipts.clear();
         state.expanded.clear();
         state.openReply = null;
+        state.openZap = null;
         render();
       }
       break;
@@ -673,8 +1071,44 @@ function toggleDay(iso: string) {
     state.data.days.sort();
     if (iso === todayIso()) toast("Logged. Keep it up! 🌿");
   }
+  celebrateBadges();
   persist();
   render();
+}
+
+function setJournalField(field: "mood" | "craving", value: number) {
+  const today = todayIso();
+  const entry = { ...(state.data.journal[today] ?? {}) };
+  // Tapping the active value again clears it.
+  entry[field] = entry[field] === value ? undefined : value;
+  entry.updatedAt = Date.now();
+  state.data.journal[today] = entry;
+  persist();
+  render();
+}
+
+function saveJournalNote() {
+  const today = todayIso();
+  const note = val("#journal-note").trim();
+  const entry = { ...(state.data.journal[today] ?? {}) };
+  entry.note = note || undefined;
+  entry.updatedAt = Date.now();
+  state.data.journal[today] = entry;
+  delete state.drafts["journal-note"];
+  persist();
+  render();
+  toast("Saved");
+}
+
+/** Toast + remember when the user crosses a new milestone badge. */
+function celebrateBadges() {
+  const stats = computeStats(state.data);
+  const top = topBadgeDays(stats);
+  if (top > state.data.settings.lastBadgeSeen) {
+    state.data.settings.lastBadgeSeen = top;
+    const badge = badges(stats).find((b) => b.days === top);
+    if (badge) toast(`${badge.icon} Milestone unlocked: ${badge.label}!`);
+  }
 }
 
 function saveSettings() {
@@ -684,9 +1118,169 @@ function saveSettings() {
   s.costPerDrink = Math.max(0, Number(val("#set-cost")) || 0);
   s.currency = val("#set-currency").trim() || "$";
   s.caloriesPerDrink = Math.max(0, Number(val("#set-cal")) || 0);
+  s.savingsGoal = Math.max(0, Number(val("#set-goal")) || 0);
   persist();
   render();
   toast("Saved");
+}
+
+function saveChallenge() {
+  const c = state.data.challenge;
+  c.title = val("#set-ch-title").trim() || "Dry July";
+  const start = val("#set-ch-start").trim();
+  if (start) c.start = start;
+  c.length = Math.min(366, Math.max(1, Number(val("#set-ch-length")) || 31));
+  persist();
+  render();
+  toast("Challenge updated");
+}
+
+async function toggleReminders() {
+  const s = state.data.settings;
+  if (!s.reminders) {
+    if (typeof Notification === "undefined") {
+      toast("Notifications aren't supported here");
+      return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== "granted") {
+      toast("Notification permission denied");
+      return;
+    }
+    s.reminders = true;
+    toast("Daily reminders on 🔔");
+  } else {
+    s.reminders = false;
+    toast("Reminders off");
+  }
+  persist();
+  scheduleReminder();
+  render();
+}
+
+function saveRelays() {
+  const lines = val("#set-relays")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  state.data.settings.relays = lines;
+  applySettings();
+  persist();
+  // Reconnect the feed with the new relays if it's running.
+  if (state.feedUnsub) {
+    state.feedUnsub();
+    state.interactionsUnsub?.();
+    state.feedUnsub = null;
+    state.interactionsUnsub = null;
+    state.feed = [];
+    startFeed();
+  }
+  render();
+  toast(lines.length ? `Using ${lines.length} relay(s)` : "Using default relays");
+}
+
+function addBuddy(input: string) {
+  try {
+    const pubkey = pubkeyFromInput(input);
+    if (pubkey === state.identity?.pubkey) {
+      toast("That's you!");
+      return;
+    }
+    const buddies = state.data.settings.buddies;
+    if (buddies.includes(pubkey)) {
+      toast("Already added");
+      return;
+    }
+    buddies.push(pubkey);
+    delete state.drafts["buddy-npub"];
+    persist();
+    render();
+    refreshLeaderboard();
+  } catch (err) {
+    toast((err as Error).message);
+  }
+}
+
+function removeBuddy(pubkey: string) {
+  state.data.settings.buddies = state.data.settings.buddies.filter((p) => p !== pubkey);
+  state.leaderboard = state.leaderboard.filter((e) => e.pubkey !== pubkey);
+  persist();
+  render();
+}
+
+async function refreshLeaderboard() {
+  if (!state.identity) return;
+  state.leaderboardLoading = true;
+  render();
+  const pubkeys = [state.identity.pubkey, ...state.data.settings.buddies];
+
+  // Pull names + each person's public day list in parallel.
+  const [profiles, dayLists] = await Promise.all([
+    fetchProfiles(pubkeys),
+    Promise.all(
+      pubkeys.map(async (pk) =>
+        pk === state.identity!.pubkey
+          ? state.data.days
+          : (await fetchAppDays(pk)) ?? []
+      )
+    )
+  ]);
+  profiles.forEach((v, k) => state.profiles.set(k, v));
+
+  state.leaderboard = pubkeys
+    .map((pk, i) => {
+      const stats = computeStats({
+        days: dayLists[i],
+        settings: state.data.settings,
+        challenge: state.data.challenge,
+        journal: {},
+        updatedAt: 0
+      });
+      return {
+        pubkey: pk,
+        name: state.profiles.get(pk)?.name || shortNpub(pk),
+        challengeDays: stats.challengeDays,
+        longestStreak: stats.longestStreak,
+        isSelf: pk === state.identity!.pubkey
+      };
+    })
+    .sort((a, b) => b.challengeDays - a.challengeDays || b.longestStreak - a.longestStreak);
+
+  state.leaderboardLoading = false;
+  render();
+}
+
+function exportData() {
+  const blob = new Blob([JSON.stringify(state.data, null, 2)], {
+    type: "application/json"
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "dry-july-backup.json";
+  a.click();
+  URL.revokeObjectURL(url);
+  toast("Backup downloaded");
+}
+
+function importData(text: string) {
+  const raw = text.trim();
+  if (!raw) {
+    toast("Paste a backup first");
+    return;
+  }
+  try {
+    const parsed = JSON.parse(raw) as { days?: string[] };
+    if (!Array.isArray(parsed.days)) throw new Error("No days found");
+    const merged = new Set([...state.data.days, ...parsed.days]);
+    state.data.days = [...merged].sort();
+    delete state.drafts["import-data"];
+    persist();
+    render();
+    toast(`Imported — ${state.data.days.length} dry days total`);
+  } catch {
+    toast("Couldn't read that backup");
+  }
 }
 
 async function postNote(text: string, isCheckin: boolean) {
@@ -698,17 +1292,21 @@ async function postNote(text: string, isCheckin: boolean) {
   if (!state.identity) return;
   const stats = computeStats(state.data);
   const suffix = isCheckin ? `\n\nDay ${stats.currentStreak} of #dryjuly 🌿` : "";
+  // Always carry #dryjuly so check-ins stay discoverable; add #mocktail when
+  // posting from the mocktail tab so it shows in both feeds.
+  const tags: string[][] = [
+    [DRY_JULY_TAG],
+    ["sober"]
+  ].map((t) => ["t", ...t]);
+  if (!isCheckin && state.feedTag === "mocktail") tags.push(["t", "mocktail"]);
   try {
     await publish(state.identity, {
       kind: 1,
       created_at: Math.floor(Date.now() / 1000),
-      tags: [
-        ["t", DRY_JULY_TAG],
-        ["t", "sober"]
-      ],
+      tags,
       content: body + suffix
     });
-    toast("Posted to #dryjuly 🎉");
+    toast("Posted 🎉");
     const id = isCheckin ? "share-text" : "community-text";
     const ta = root.querySelector<HTMLTextAreaElement>(`#${id}`);
     if (ta) ta.value = "";
@@ -729,6 +1327,19 @@ async function likePost(id: string, pubkey: string) {
     await react(state.identity, { id, pubkey });
   } catch {
     toast("Couldn't reach relays — try again");
+  }
+}
+
+async function zapPost(id: string, pubkey: string, sats: number) {
+  if (!state.identity) return;
+  state.openZap = null;
+  render();
+  toast(`Requesting ⚡ ${sats} sats…`);
+  try {
+    await zap(state.identity, { id, pubkey }, sats);
+    toast(`Zapped ⚡ ${sats} sats!`);
+  } catch (err) {
+    toast((err as Error).message || "Zap failed");
   }
 }
 
@@ -773,7 +1384,24 @@ function startFeed() {
     if (state.view === "community") scheduleRender();
     queueProfileFetch();
     refreshInteractions();
-  });
+  }, state.feedTag);
+}
+
+/** Switch the community hashtag and restart the feed from scratch. */
+function setFeedTag(tag: "dryjuly" | "mocktail") {
+  if (state.feedTag === tag) return;
+  state.feedTag = tag;
+  state.feedUnsub?.();
+  state.interactionsUnsub?.();
+  state.feedUnsub = null;
+  state.interactionsUnsub = null;
+  state.feed = [];
+  state.reactions.clear();
+  state.replies.clear();
+  state.zaps.clear();
+  state.zapReceipts.clear();
+  startFeed();
+  render();
 }
 
 /** (Re)subscribe to likes & replies for the posts currently in the feed. */
@@ -796,6 +1424,12 @@ function refreshInteractions() {
       reply(targetId, item) {
         addReply(targetId, item);
         queueProfileFetch();
+        if (state.view === "community") scheduleRender();
+      },
+      zap(targetId, receiptId, sats) {
+        if (state.zapReceipts.has(receiptId)) return;
+        state.zapReceipts.add(receiptId);
+        state.zaps.set(targetId, (state.zaps.get(targetId) ?? 0) + sats);
         if (state.view === "community") scheduleRender();
       }
     });
@@ -825,4 +1459,43 @@ async function copy(text: string, msg: string) {
   } catch {
     toast("Copy failed — select manually");
   }
+}
+
+function closeModal() {
+  document.getElementById("qr-modal")?.remove();
+}
+
+async function showQr() {
+  if (!state.identity) return;
+  const n = npub(state.identity.pubkey);
+  let dataUrl: string;
+  try {
+    dataUrl = await QRCode.toDataURL(`nostr:${n}`, {
+      width: 280,
+      margin: 1,
+      color: { dark: "#0b1020", light: "#ffffff" }
+    });
+  } catch {
+    toast("Couldn't render QR code");
+    return;
+  }
+  closeModal();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "qr-modal";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 style="margin-top:0">Your Nostr identity</h2>
+      <p class="note" style="margin-top:0">Scan to follow you on any Nostr client.</p>
+      <img class="qr" src="${dataUrl}" alt="npub QR code" />
+      <div class="code" style="margin-top:12px">${esc(n)}</div>
+      <button class="btn" id="qr-copy" style="margin-top:12px">Copy npub</button>
+      <button class="btn ghost" id="qr-close" style="margin-top:8px">Close</button>
+    </div>`;
+  overlay.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t === overlay || t.id === "qr-close") closeModal();
+    if (t.id === "qr-copy") copy(n, "npub copied");
+  });
+  document.body.appendChild(overlay);
 }

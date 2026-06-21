@@ -1,6 +1,11 @@
 import { SimplePool } from "nostr-tools/pool";
 import type { Event, EventTemplate } from "nostr-tools/core";
 import { finalizeEvent, getPublicKey, generateSecretKey } from "nostr-tools/pure";
+import {
+  getZapEndpoint,
+  makeZapRequest,
+  getSatoshisAmountFromBolt11
+} from "nostr-tools/nip57";
 import * as nip19 from "nostr-tools/nip19";
 
 export type { Event };
@@ -19,6 +24,18 @@ export const DEFAULT_RELAYS = [
   "wss://relay.primal.net",
   "wss://nostr.wine"
 ];
+
+/** The relay set actually used by every call (overridable in Settings). */
+let activeRelays = [...DEFAULT_RELAYS];
+
+export function getRelays(): string[] {
+  return [...activeRelays];
+}
+
+export function setRelays(relays: string[]): void {
+  const cleaned = relays.map((r) => r.trim()).filter(Boolean);
+  activeRelays = cleaned.length ? cleaned : [...DEFAULT_RELAYS];
+}
 
 /** A NIP-07 capable browser extension, if installed. */
 interface Nip07 {
@@ -81,6 +98,36 @@ export function shortNpub(pubkey: string): string {
   return `${n.slice(0, 12)}…${n.slice(-6)}`;
 }
 
+/** Parse an npub (bech32) or 64-char hex string into a hex pubkey. */
+export function pubkeyFromInput(input: string): string {
+  const t = input.trim();
+  if (t.startsWith("npub")) {
+    const decoded = nip19.decode(t);
+    if (decoded.type !== "npub") throw new Error("Not a valid npub");
+    return decoded.data;
+  }
+  if (/^[0-9a-fA-F]{64}$/.test(t)) return t.toLowerCase();
+  throw new Error("Enter a valid npub or hex pubkey");
+}
+
+/** Read another user's public NIP-78 dry-day list, or null. */
+export async function fetchAppDays(
+  pubkey: string,
+  relays = activeRelays
+): Promise<string[] | null> {
+  const event = await fetchLatest(
+    { kinds: [APP_DATA_KIND], authors: [pubkey], "#d": [APP_DATA_D] },
+    relays
+  );
+  if (!event) return null;
+  try {
+    const parsed = JSON.parse(event.content) as { days?: string[] };
+    return parsed.days ?? [];
+  } catch {
+    return null;
+  }
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
@@ -108,7 +155,7 @@ export async function sign(
 export async function publish(
   identity: Identity,
   template: EventTemplate,
-  relays = DEFAULT_RELAYS
+  relays = activeRelays
 ): Promise<Event> {
   const event = await sign(identity, template);
   const results = pool.publish(relays, event);
@@ -123,7 +170,7 @@ export async function publish(
 /** Fetch the newest event matching a filter, or null. */
 export async function fetchLatest(
   filter: Parameters<typeof pool.get>[1],
-  relays = DEFAULT_RELAYS
+  relays = activeRelays
 ): Promise<Event | null> {
   try {
     return await pool.get(relays, filter);
@@ -139,14 +186,15 @@ export type FeedItem = {
   created_at: number;
 };
 
-/** Subscribe to the community feed (top-level posts only). */
+/** Subscribe to a hashtag's community feed (top-level posts only). */
 export function subscribeFeed(
   onEvent: (item: FeedItem) => void,
-  relays = DEFAULT_RELAYS
+  tag = DRY_JULY_TAG,
+  relays = activeRelays
 ): () => void {
   const sub = pool.subscribeMany(
     relays,
-    { kinds: [1], "#t": [DRY_JULY_TAG], limit: 50 },
+    { kinds: [1], "#t": [tag], limit: 50 },
     {
       onevent(e) {
         // Skip replies — they surface threaded under their parent instead.
@@ -167,7 +215,7 @@ export function subscribeFeed(
 export async function react(
   identity: Identity,
   target: { id: string; pubkey: string },
-  relays = DEFAULT_RELAYS
+  relays = activeRelays
 ): Promise<void> {
   await publish(
     identity,
@@ -189,7 +237,7 @@ export async function reply(
   identity: Identity,
   target: { id: string; pubkey: string },
   content: string,
-  relays = DEFAULT_RELAYS
+  relays = activeRelays
 ): Promise<Event> {
   return publish(
     identity,
@@ -222,19 +270,28 @@ export function subscribeInteractions(
   on: {
     like: (targetId: string, pubkey: string) => void;
     reply: (targetId: string, item: FeedItem) => void;
+    zap: (targetId: string, receiptId: string, sats: number) => void;
   },
-  relays = DEFAULT_RELAYS
+  relays = activeRelays
 ): () => void {
   if (ids.length === 0) return () => {};
   const known = new Set(ids);
   const sub = pool.subscribeMany(
     relays,
-    { kinds: [1, 7], "#e": ids },
+    { kinds: [1, 7, 9735], "#e": ids },
     {
       onevent(e) {
         const targetId = targetIdFor(e.tags, known);
         if (!targetId) return;
-        if (e.kind === 7) {
+        if (e.kind === 9735) {
+          const bolt11 = e.tags.find((t) => t[0] === "bolt11")?.[1];
+          if (!bolt11) return;
+          try {
+            on.zap(targetId, e.id, getSatoshisAmountFromBolt11(bolt11));
+          } catch {
+            /* unparseable invoice — skip */
+          }
+        } else if (e.kind === 7) {
           if (e.content === "-") return; // a downvote — ignore
           on.like(targetId, e.pubkey);
         } else {
@@ -254,7 +311,7 @@ export function subscribeInteractions(
 /** Fetch kind:0 profile metadata for a set of pubkeys. */
 export async function fetchProfiles(
   pubkeys: string[],
-  relays = DEFAULT_RELAYS
+  relays = activeRelays
 ): Promise<Map<string, { name?: string; picture?: string }>> {
   const out = new Map<string, { name?: string; picture?: string }>();
   if (pubkeys.length === 0) return out;
@@ -285,4 +342,63 @@ export async function fetchProfiles(
       resolve(out);
     }, 4000);
   });
+}
+
+/* ---------------- Zaps (NIP-57 + WebLN) ---------------- */
+
+interface WebLN {
+  enable(): Promise<void>;
+  sendPayment(invoice: string): Promise<{ preimage: string }>;
+}
+
+declare global {
+  interface Window {
+    webln?: WebLN;
+  }
+}
+
+export function hasWebln(): boolean {
+  return typeof window !== "undefined" && !!window.webln;
+}
+
+/**
+ * Send a Lightning zap to the author of a post via NIP-57 + WebLN.
+ * Resolves once the payment is sent; throws with a user-friendly message.
+ */
+export async function zap(
+  identity: Identity,
+  target: { id: string; pubkey: string },
+  sats: number,
+  comment = "",
+  relays = activeRelays
+): Promise<void> {
+  if (!window.webln) throw new Error("No Lightning wallet (WebLN) found");
+
+  const metadata = await fetchLatest(
+    { kinds: [0], authors: [target.pubkey] },
+    relays
+  );
+  if (!metadata) throw new Error("Couldn't load the recipient's profile");
+
+  const callback = await getZapEndpoint(metadata);
+  if (!callback) throw new Error("This user hasn't set up Lightning zaps");
+
+  const amount = Math.round(sats) * 1000; // millisats
+  const zapRequest = makeZapRequest({
+    event: { id: target.id, pubkey: target.pubkey, kind: 1 } as Event,
+    amount,
+    comment,
+    relays
+  });
+  const signed = await sign(identity, zapRequest);
+
+  const url = `${callback}?amount=${amount}&nostr=${encodeURIComponent(
+    JSON.stringify(signed)
+  )}`;
+  const res = await fetch(url);
+  const body = await res.json();
+  if (!body.pr) throw new Error(body.reason || "Invoice request failed");
+
+  await window.webln.enable();
+  await window.webln.sendPayment(body.pr);
 }
