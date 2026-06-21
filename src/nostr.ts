@@ -139,7 +139,7 @@ export type FeedItem = {
   created_at: number;
 };
 
-/** Subscribe to the community feed. Returns an unsubscribe function. */
+/** Subscribe to the community feed (top-level posts only). */
 export function subscribeFeed(
   onEvent: (item: FeedItem) => void,
   relays = DEFAULT_RELAYS
@@ -149,12 +149,102 @@ export function subscribeFeed(
     { kinds: [1], "#t": [DRY_JULY_TAG], limit: 50 },
     {
       onevent(e) {
+        // Skip replies — they surface threaded under their parent instead.
+        if (e.tags.some((t) => t[0] === "e")) return;
         onEvent({
           id: e.id,
           pubkey: e.pubkey,
           content: e.content,
           created_at: e.created_at
         });
+      }
+    }
+  );
+  return () => sub.close();
+}
+
+/** Like a post with a NIP-25 reaction (kind 7). */
+export async function react(
+  identity: Identity,
+  target: { id: string; pubkey: string },
+  relays = DEFAULT_RELAYS
+): Promise<void> {
+  await publish(
+    identity,
+    {
+      kind: 7,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["e", target.id],
+        ["p", target.pubkey]
+      ],
+      content: "+"
+    },
+    relays
+  );
+}
+
+/** Reply to a post with a NIP-10 threaded note (kind 1). */
+export async function reply(
+  identity: Identity,
+  target: { id: string; pubkey: string },
+  content: string,
+  relays = DEFAULT_RELAYS
+): Promise<Event> {
+  return publish(
+    identity,
+    {
+      kind: 1,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [
+        ["e", target.id, "", "root"],
+        ["p", target.pubkey],
+        ["t", DRY_JULY_TAG]
+      ],
+      content
+    },
+    relays
+  );
+}
+
+/** Pick the e-tag of an event that points at one of the tracked posts. */
+function targetIdFor(tags: string[][], known: Set<string>): string | null {
+  const eTags = tags.filter((t) => t[0] === "e" && t[1]);
+  const reply = eTags.find((t) => t[3] === "reply");
+  const root = eTags.find((t) => t[3] === "root");
+  const candidate = reply?.[1] ?? root?.[1] ?? eTags[eTags.length - 1]?.[1];
+  return candidate && known.has(candidate) ? candidate : null;
+}
+
+/** Track likes & replies for a set of post ids. Returns an unsubscribe fn. */
+export function subscribeInteractions(
+  ids: string[],
+  on: {
+    like: (targetId: string, pubkey: string) => void;
+    reply: (targetId: string, item: FeedItem) => void;
+  },
+  relays = DEFAULT_RELAYS
+): () => void {
+  if (ids.length === 0) return () => {};
+  const known = new Set(ids);
+  const sub = pool.subscribeMany(
+    relays,
+    { kinds: [1, 7], "#e": ids },
+    {
+      onevent(e) {
+        const targetId = targetIdFor(e.tags, known);
+        if (!targetId) return;
+        if (e.kind === 7) {
+          if (e.content === "-") return; // a downvote — ignore
+          on.like(targetId, e.pubkey);
+        } else {
+          on.reply(targetId, {
+            id: e.id,
+            pubkey: e.pubkey,
+            content: e.content,
+            created_at: e.created_at
+          });
+        }
       }
     }
   );
