@@ -26,13 +26,14 @@ other way around — **Nostr is the backend**:
 - 📅 **Calendar** — tap any day to toggle it dry/not-dry
 - 🏆 **Milestone badges** (1 → 90 days) with unlock celebrations
 - 💛 **Supportive slip flow** — a broken streak keeps your best, no shaming
-- 💸 **Live stats** — money saved, calories avoided, 14-day trend, savings goal
+- 📝 **Daily journal** — log mood, cravings & a private note (synced via Nostr)
+- 💸 **Live stats** — money saved, calories avoided, 14-day trend, avg mood, savings goal
 - 🌐 **Two-way community** — `#dryjuly` feed with likes, threaded replies & zaps
 - ⚡ **Lightning zaps** (NIP-57 + WebLN) to cheer people on with sats
 - 🍹 **Mocktail sub-feed** — share `#mocktail` recipes & 0% finds
 - 👥 **Buddies & leaderboard** — follow friends and compare streaks
 - 🎛️ **Make it yours** — custom challenge, editable relays, light/dark theme
-- 💾 **Backup** — export/import your data as JSON
+- 💾 **Backup** — export/import your data as JSON, share your npub via QR
 - 📲 **Installable PWA** — works offline, add it to your home screen
 - 🔑 **Bring-your-own-key** — NIP-07, `nsec` import, or generate a new identity
 - ☁️ **Cross-device sync** via NIP-78, with local-first offline storage

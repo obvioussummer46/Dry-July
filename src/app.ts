@@ -41,6 +41,7 @@ import {
   topBadgeDays
 } from "./stats";
 import { icons, logoSvg } from "./icons";
+import QRCode from "qrcode";
 
 type View = "today" | "calendar" | "community" | "profile";
 
@@ -417,11 +418,46 @@ function renderToday(): string {
       </div>
     </div>
 
+    ${renderJournalCard()}
+
     <div class="card">
       <h2>Share your win</h2>
       <p class="note" style="margin-top:0">Post an update to the #dryjuly community on Nostr.</p>
       <textarea id="share-text" rows="2" placeholder="Day ${stats.currentStreak} and feeling great…"></textarea>
       <button class="btn secondary" data-action="share-checkin" style="margin-top:10px">Post to community</button>
+    </div>`;
+}
+
+const MOODS = ["😣", "😕", "😐", "🙂", "😄"];
+
+function renderJournalCard(): string {
+  const today = todayIso();
+  const entry = state.data.journal[today] ?? {};
+  const moodBtns = MOODS.map(
+    (emoji, i) =>
+      `<button class="mood ${entry.mood === i + 1 ? "sel" : ""}" data-action="set-mood" data-val="${i + 1}">${emoji}</button>`
+  ).join("");
+  const cravingDots = [1, 2, 3, 4, 5]
+    .map(
+      (n) =>
+        `<button class="dot ${entry.craving && entry.craving >= n ? "on" : ""}" data-action="set-craving" data-val="${n}" aria-label="craving ${n}"></button>`
+    )
+    .join("");
+
+  return `
+    <div class="card">
+      <h2>How was today?</h2>
+      <p class="note" style="margin-top:0">Mood</p>
+      <div class="mood-row">${moodBtns}</div>
+      <div class="flex-between" style="margin-top:14px">
+        <p class="note" style="margin:0">Cravings</p>
+        <div class="dot-row">${cravingDots}</div>
+      </div>
+      <label class="field" style="margin-top:14px">
+        <span>Note (private, syncs to your Nostr account)</span>
+        <textarea id="journal-note" rows="2" placeholder="A win, a trigger, a thought…">${esc(entry.note ?? "")}</textarea>
+      </label>
+      <button class="btn secondary" data-action="save-journal">Save note</button>
     </div>`;
 }
 
@@ -504,10 +540,25 @@ function renderTrendCard(stats: ReturnType<typeof computeStats>): string {
         })()
       : "";
 
+  // Average mood across the last 14 logged reflections.
+  const moods = trend
+    .map((d) => state.data.journal[d.iso]?.mood)
+    .filter((m): m is number => typeof m === "number");
+  const avgMood = moods.length
+    ? MOODS[Math.round(moods.reduce((a, b) => a + b, 0) / moods.length) - 1]
+    : "";
+  const moodLine = moods.length
+    ? `<div class="flex-between" style="margin-top:14px">
+         <span class="note" style="margin:0">Avg mood (2 wks)</span>
+         <span style="font-size:20px">${avgMood}</span>
+       </div>`
+    : "";
+
   return `
     <div class="card">
       <h2>Last 14 days</h2>
       <div class="trend">${bars}</div>
+      ${moodLine}
       ${goalCard}
     </div>`;
 }
@@ -859,6 +910,15 @@ async function onClick(e: MouseEvent) {
     case "check-in":
       toggleDay(todayIso());
       break;
+    case "set-mood":
+      setJournalField("mood", Number(target.dataset.val));
+      break;
+    case "set-craving":
+      setJournalField("craving", Number(target.dataset.val));
+      break;
+    case "save-journal":
+      saveJournalNote();
+      break;
     case "toggle-day":
       toggleDay(target.dataset.day!);
       break;
@@ -937,7 +997,7 @@ async function onClick(e: MouseEvent) {
       importData(val("#import-data"));
       break;
     case "show-qr":
-      copy(npub(state.identity!.pubkey), "npub copied — paste into any QR generator");
+      await showQr();
       break;
     case "copy-npub":
       copy(npub(state.identity!.pubkey), "Public key copied");
@@ -1014,6 +1074,30 @@ function toggleDay(iso: string) {
   celebrateBadges();
   persist();
   render();
+}
+
+function setJournalField(field: "mood" | "craving", value: number) {
+  const today = todayIso();
+  const entry = { ...(state.data.journal[today] ?? {}) };
+  // Tapping the active value again clears it.
+  entry[field] = entry[field] === value ? undefined : value;
+  entry.updatedAt = Date.now();
+  state.data.journal[today] = entry;
+  persist();
+  render();
+}
+
+function saveJournalNote() {
+  const today = todayIso();
+  const note = val("#journal-note").trim();
+  const entry = { ...(state.data.journal[today] ?? {}) };
+  entry.note = note || undefined;
+  entry.updatedAt = Date.now();
+  state.data.journal[today] = entry;
+  delete state.drafts["journal-note"];
+  persist();
+  render();
+  toast("Saved");
 }
 
 /** Toast + remember when the user crosses a new milestone badge. */
@@ -1149,6 +1233,7 @@ async function refreshLeaderboard() {
         days: dayLists[i],
         settings: state.data.settings,
         challenge: state.data.challenge,
+        journal: {},
         updatedAt: 0
       });
       return {
@@ -1374,4 +1459,43 @@ async function copy(text: string, msg: string) {
   } catch {
     toast("Copy failed — select manually");
   }
+}
+
+function closeModal() {
+  document.getElementById("qr-modal")?.remove();
+}
+
+async function showQr() {
+  if (!state.identity) return;
+  const n = npub(state.identity.pubkey);
+  let dataUrl: string;
+  try {
+    dataUrl = await QRCode.toDataURL(`nostr:${n}`, {
+      width: 280,
+      margin: 1,
+      color: { dark: "#0b1020", light: "#ffffff" }
+    });
+  } catch {
+    toast("Couldn't render QR code");
+    return;
+  }
+  closeModal();
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.id = "qr-modal";
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2 style="margin-top:0">Your Nostr identity</h2>
+      <p class="note" style="margin-top:0">Scan to follow you on any Nostr client.</p>
+      <img class="qr" src="${dataUrl}" alt="npub QR code" />
+      <div class="code" style="margin-top:12px">${esc(n)}</div>
+      <button class="btn" id="qr-copy" style="margin-top:12px">Copy npub</button>
+      <button class="btn ghost" id="qr-close" style="margin-top:8px">Close</button>
+    </div>`;
+  overlay.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    if (t === overlay || t.id === "qr-close") closeModal();
+    if (t.id === "qr-copy") copy(n, "npub copied");
+  });
+  document.body.appendChild(overlay);
 }

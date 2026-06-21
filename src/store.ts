@@ -45,11 +45,25 @@ export interface Challenge {
   length: number;
 }
 
+/** Optional per-day reflection. */
+export interface JournalEntry {
+  /** Mood 1 (rough) … 5 (great). */
+  mood?: number;
+  /** Craving 1 (none) … 5 (strong). */
+  craving?: number;
+  /** Free-text note. */
+  note?: string;
+  /** When this entry was last edited (ms) — used for sync conflict resolution. */
+  updatedAt?: number;
+}
+
 export interface AppData {
   /** ISO dates (YYYY-MM-DD) the user logged as alcohol-free. */
   days: string[];
   settings: Settings;
   challenge: Challenge;
+  /** Per-day reflections keyed by ISO date. */
+  journal: Record<string, JournalEntry>;
   updatedAt: number;
 }
 
@@ -78,6 +92,7 @@ export function emptyData(): AppData {
     days: [],
     settings: { ...DEFAULT_SETTINGS },
     challenge: defaultChallenge(),
+    journal: {},
     updatedAt: 0
   };
 }
@@ -130,6 +145,7 @@ export function loadLocalData(): AppData {
       days: parsed.days ?? [],
       settings: { ...DEFAULT_SETTINGS, ...(parsed.settings ?? {}) },
       challenge: { ...defaultChallenge(), ...(parsed.challenge ?? {}) },
+      journal: parsed.journal ?? {},
       updatedAt: parsed.updatedAt ?? 0
     };
   } catch {
@@ -158,6 +174,7 @@ export async function syncFromNostr(
       days: remote.days ?? [],
       settings: { ...DEFAULT_SETTINGS, ...(remote.settings ?? {}) },
       challenge: { ...defaultChallenge(), ...(remote.challenge ?? {}) },
+      journal: remote.journal ?? {},
       updatedAt: event.created_at * 1000
     });
     saveLocalData(merged);
@@ -175,8 +192,24 @@ export function mergeData(a: AppData, b: AppData): AppData {
     days,
     settings: newest.settings,
     challenge: newest.challenge,
+    journal: mergeJournal(a.journal, b.journal),
     updatedAt: Math.max(a.updatedAt, b.updatedAt)
   };
+}
+
+/** Merge journals per date, keeping the most recently edited entry. */
+function mergeJournal(
+  a: Record<string, JournalEntry> = {},
+  b: Record<string, JournalEntry> = {}
+): Record<string, JournalEntry> {
+  const out: Record<string, JournalEntry> = { ...a };
+  for (const [date, entry] of Object.entries(b)) {
+    const existing = out[date];
+    if (!existing || (entry.updatedAt ?? 0) >= (existing.updatedAt ?? 0)) {
+      out[date] = entry;
+    }
+  }
+  return out;
 }
 
 /** Persist app data to Nostr as a NIP-78 replaceable event. */
@@ -191,7 +224,8 @@ export async function pushToNostr(
     content: JSON.stringify({
       days: data.days,
       settings: data.settings,
-      challenge: data.challenge
+      challenge: data.challenge,
+      journal: data.journal
     })
   });
 }

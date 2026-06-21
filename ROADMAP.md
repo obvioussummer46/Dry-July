@@ -32,13 +32,12 @@ Real encouragement with sats — the most nostr-true feature.
 - [x] Custom challenge (title, start date, length — Dry January, 90 days, etc.)
 - [x] Multi-relay management UI (edit list, live reconnect, defaults fallback)
 - [x] Follow / accountability buddies + buddy leaderboard (reads public NIP-78)
-- [x] Richer stats — 14-day trend sparkline + savings-goal progress bar
+- [x] Richer stats — 14-day trend sparkline, avg-mood, savings-goal bar
+- [x] Per-day mood / craving journaling (synced via NIP-78)
 - [x] Mocktail/recipe sub-feed (`#mocktail`, cross-posted with `#dryjuly`)
-- [x] Data export/import (JSON merge) + copy npub for sharing
+- [x] Data export/import (JSON merge) + on-device npub QR code
 - [x] Light mode + theming
 
-## Later (nice-to-have)
-- [ ] Per-day mood / craving journaling
-- [ ] On-device QR rendering for npub
+## Later (needs a backend or out of scope)
+- [ ] Background Web Push (needs VAPID keys + a serverless push endpoint)
 - [ ] NIP-58 badge events for milestones
-- [ ] Background push via a small serverless relay
