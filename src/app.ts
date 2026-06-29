@@ -377,18 +377,24 @@ function renderToday(): string {
       : "";
 
   return `
-    <div class="card hero" style="--pct:${pct}%">
-      <div class="ring">
+    <div class="card hero ${checkedToday ? "logged" : "todo"}" style="--pct:${pct}%">
+      <button
+        class="ring"
+        data-action="log-today"
+        aria-pressed="${checkedToday}"
+        aria-label="${checkedToday ? "Undo today's log" : "Log today as alcohol-free"}"
+      >
         <div>
           <div class="num">${stats.currentStreak}</div>
           <div class="lbl">day streak</div>
         </div>
-      </div>
+        <span class="ring-badge">${checkedToday ? icons.check : "+"}</span>
+      </button>
       <p class="sub" style="margin-bottom:0">
         ${
           checkedToday
-            ? "Nice — today is logged alcohol-free 🌿"
-            : "Tap today in the calendar below to log your dry day 👇"
+            ? "Today's logged 🌿 — tap the ring to undo"
+            : "Tap the ring to log today"
         }
       </p>
     </div>
@@ -972,6 +978,9 @@ async function onClick(e: MouseEvent) {
       } catch (err) {
         toast((err as Error).message);
       }
+      break;
+    case "log-today":
+      toggleDay(todayIso());
       break;
     case "set-mood":
       setJournalField("mood", Number(target.dataset.val));

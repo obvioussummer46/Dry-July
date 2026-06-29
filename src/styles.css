@@ -136,13 +136,64 @@ button {
 .hero .ring {
   width: 168px;
   height: 168px;
-  margin: 6px auto 14px;
+  margin: 6px auto 22px;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
   border-radius: 50%;
   display: grid;
   place-items: center;
   position: relative;
   background: conic-gradient(var(--accent) var(--pct, 0%), #223 0);
-  transition: background 0.6s ease;
+  transition: background 0.6s ease, transform 0.1s ease;
+}
+.hero .ring:active {
+  transform: scale(0.97);
+}
+/* Affordance badge on the ring: "+" to log, check once logged. */
+.ring-badge {
+  position: absolute;
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  font-weight: 800;
+  line-height: 1;
+  border: 3px solid var(--bg-soft);
+  background: var(--card-2);
+  color: var(--accent);
+}
+.ring-badge svg {
+  width: 18px;
+  height: 18px;
+}
+.hero.logged .ring-badge {
+  background: linear-gradient(180deg, #5ef295, var(--accent));
+  color: #06210f;
+}
+/* Gently pulse the ring while today is still unlogged. */
+.hero.todo .ring {
+  animation: ringpulse 2.4s ease-in-out infinite;
+}
+@keyframes ringpulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(74, 222, 128, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 9px rgba(74, 222, 128, 0.12);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero.todo .ring {
+    animation: none;
+  }
 }
 .hero .ring::before {
   content: "";
