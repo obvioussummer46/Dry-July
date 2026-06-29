@@ -34,7 +34,13 @@ export interface Settings {
   theme: "dark" | "light";
   /** Followed buddy pubkeys (hex) for the leaderboard. */
   buddies: string[];
+  /** Default text used when sharing a check-in. `{day}` → current streak. */
+  shareText: string;
 }
+
+/** Default check-in share text — editable in Settings. */
+export const DEFAULT_SHARE_TEXT =
+  "Day {day} of #dryjuly 🌿\nhttps://dryjuly.vercel.app";
 
 /** A configurable challenge — defaults to Dry July of the current year. */
 export interface Challenge {
@@ -78,7 +84,8 @@ export const DEFAULT_SETTINGS: Settings = {
   lastBadgeSeen: 0,
   relays: [],
   theme: "dark",
-  buddies: []
+  buddies: [],
+  shareText: DEFAULT_SHARE_TEXT
 };
 
 const MONTH_NAMES = [

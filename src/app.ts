@@ -23,6 +23,7 @@ import {
 } from "./nostr";
 import {
   clearIdentity,
+  DEFAULT_SHARE_TEXT,
   loadIdentity,
   loadLocalData,
   pushToNostr,
@@ -434,10 +435,15 @@ function renderToday(): string {
 
     <div class="card">
       <h2>Share your win</h2>
-      <p class="note" style="margin-top:0">Post an update to the #dryjuly community on Nostr.</p>
-      <textarea id="share-text" rows="2" placeholder="Day ${stats.currentStreak} and feeling great…"></textarea>
+      <p class="note" style="margin-top:0">Posts to the #dryjuly community on Nostr — edit freely before posting. Change the default in Profile → Personalize.</p>
+      <textarea id="share-text" rows="3" placeholder="Day ${stats.currentStreak} and feeling great…">${esc(checkinDefault(stats.currentStreak))}</textarea>
       <button class="btn secondary" data-action="share-checkin" style="margin-top:10px">Post to community</button>
     </div>`;
+}
+
+/** The default check-in text with the `{day}` placeholder filled in. */
+function checkinDefault(streak: number): string {
+  return state.data.settings.shareText.split("{day}").join(String(streak));
 }
 
 /** A short "what's happening in your body" note tied to the current streak. */
@@ -841,6 +847,10 @@ function renderProfile(): string {
         <span>Savings goal (${esc(s.currency)}, 0 = none)</span>
         <input id="set-goal" type="number" min="0" step="10" value="${s.savingsGoal}" />
       </label>
+      <label class="field">
+        <span>Default check-in text (<code>{day}</code> = current streak)</span>
+        <textarea id="set-share" rows="3" placeholder="${esc(DEFAULT_SHARE_TEXT)}">${esc(s.shareText)}</textarea>
+      </label>
       <button class="btn" data-action="save-settings">Save</button>
     </div>
 
@@ -1208,6 +1218,9 @@ function saveSettings() {
   s.currency = val("#set-currency").trim() || "$";
   s.caloriesPerDrink = Math.max(0, Number(val("#set-cal")) || 0);
   s.savingsGoal = Math.max(0, Number(val("#set-goal")) || 0);
+  const share = val("#set-share");
+  s.shareText = share.trim() ? share : DEFAULT_SHARE_TEXT;
+  delete state.drafts["set-share"];
   persist();
   render();
   toast("Saved");
@@ -1425,8 +1438,6 @@ async function postNote(text: string, isCheckin: boolean) {
     return;
   }
   if (!state.identity) return;
-  const stats = computeStats(state.data);
-  const suffix = isCheckin ? `\n\nDay ${stats.currentStreak} of #dryjuly 🌿` : "";
   // Always carry #dryjuly so check-ins stay discoverable; add #mocktail when
   // posting from the mocktail tab so it shows in both feeds.
   const tags: string[][] = [
@@ -1439,13 +1450,12 @@ async function postNote(text: string, isCheckin: boolean) {
       kind: 1,
       created_at: Math.floor(Date.now() / 1000),
       tags,
-      content: body + suffix
+      content: body
     });
     toast("Posted 🎉");
-    const id = isCheckin ? "share-text" : "community-text";
-    const ta = root.querySelector<HTMLTextAreaElement>(`#${id}`);
-    if (ta) ta.value = "";
-    delete state.drafts[id];
+    // Clear the draft and re-render so the share box re-fills its default.
+    delete state.drafts[isCheckin ? "share-text" : "community-text"];
+    render();
   } catch {
     toast("Couldn't reach relays — try again");
   }
