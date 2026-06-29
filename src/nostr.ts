@@ -135,6 +135,68 @@ export async function fetchAppDays(
   }
 }
 
+/** Fetch a user's NIP-02 contact list — the hex pubkeys they follow. */
+export async function fetchContacts(
+  pubkey: string,
+  relays = activeRelays
+): Promise<string[]> {
+  const event = await fetchLatest({ kinds: [3], authors: [pubkey] }, relays);
+  if (!event) return [];
+  const seen = new Set<string>();
+  for (const t of event.tags) {
+    if (t[0] === "p" && /^[0-9a-f]{64}$/i.test(t[1] ?? "")) {
+      seen.add(t[1].toLowerCase());
+    }
+  }
+  return [...seen];
+}
+
+/**
+ * Of the given pubkeys, return the set that publishes public Dry July app
+ * data (i.e. people who also use the app). One batched subscription per
+ * chunk so we don't open a request per follow.
+ */
+export async function fetchAppUsers(
+  pubkeys: string[],
+  relays = activeRelays
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  const unique = [...new Set(pubkeys)];
+  if (unique.length === 0) return out;
+
+  const CHUNK = 200;
+  const chunks: string[][] = [];
+  for (let i = 0; i < unique.length; i += CHUNK) {
+    chunks.push(unique.slice(i, i + CHUNK));
+  }
+
+  await Promise.all(
+    chunks.map(
+      (authors) =>
+        new Promise<void>((resolve) => {
+          const sub = pool.subscribeMany(
+            relays,
+            { kinds: [APP_DATA_KIND], authors, "#d": [APP_DATA_D] },
+            {
+              onevent(e) {
+                out.add(e.pubkey);
+              },
+              oneose() {
+                sub.close();
+                resolve();
+              }
+            }
+          );
+          setTimeout(() => {
+            sub.close();
+            resolve();
+          }, 6000);
+        })
+    )
+  );
+  return out;
+}
+
 function hexToBytes(hex: string): Uint8Array {
   const bytes = new Uint8Array(hex.length / 2);
   for (let i = 0; i < bytes.length; i++) {
