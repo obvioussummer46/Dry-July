@@ -138,9 +138,18 @@ export function recentTrend(
   return out;
 }
 
-/** Weekday index (0=Mon … 6=Sun) of the challenge start, for grid alignment. */
-export function challengeStartOffset(challenge: Challenge): number {
-  const [y, m, d] = challenge.start.split("-").map(Number);
-  const first = new Date(y, m - 1, d).getDay(); // 0=Sun
-  return (first + 6) % 7; // shift so Monday = 0
+/** Every day of a calendar month (0-based month) as {iso, dom}. */
+export function monthGrid(year: number, month0: number): { iso: string; dom: number }[] {
+  const days = new Date(year, month0 + 1, 0).getDate();
+  const cells: { iso: string; dom: number }[] = [];
+  for (let d = 1; d <= days; d++) {
+    cells.push({ iso: isoDate(new Date(year, month0, d)), dom: d });
+  }
+  return cells;
+}
+
+/** Monday-based weekday offset (0=Mon … 6=Sun) of the 1st of a month. */
+export function monthStartOffset(year: number, month0: number): number {
+  const first = new Date(year, month0, 1).getDay(); // 0=Sun
+  return (first + 6) % 7;
 }

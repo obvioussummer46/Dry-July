@@ -534,6 +534,45 @@ button {
 }
 
 /* ---------- Calendar ---------- */
+.cal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.cal-title {
+  font-weight: 800;
+  font-size: 16px;
+  letter-spacing: -0.01em;
+}
+.cal-nav {
+  background: var(--card-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 20px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+}
+.cal-nav:active {
+  transform: scale(0.94);
+}
+.pill.tap {
+  color: var(--text);
+  border-color: var(--accent-2);
+  cursor: pointer;
+}
+.linklike {
+  background: none;
+  border: none;
+  color: var(--accent-2);
+  font: inherit;
+  font-size: 12px;
+  padding: 0;
+}
 .cal {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -572,6 +611,20 @@ button {
 }
 .cal .cell.future {
   opacity: 0.45;
+}
+.cal .cell.inch::after {
+  content: "";
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-2);
+}
+.cal .cell.on.inch::after {
+  background: #06210f;
 }
 
 /* ---------- Segmented control ---------- */
