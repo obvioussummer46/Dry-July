@@ -22,7 +22,14 @@ export const DEFAULT_RELAYS = [
   "wss://nos.lol",
   "wss://relay.nostr.band",
   "wss://relay.primal.net",
-  "wss://nostr.wine"
+  "wss://nostr.wine",
+  "wss://relay.snort.social",
+  "wss://purplepag.es",
+  "wss://nostr.mom",
+  "wss://offchain.pub",
+  "wss://relay.nostr.bg",
+  "wss://nostr.bitcoiner.social",
+  "wss://relay.mostr.pub"
 ];
 
 /** The relay set actually used by every call (overridable in Settings). */
