@@ -3,6 +3,8 @@ import {
   createLocalIdentity,
   DRY_JULY_TAG,
   fetchAppDays,
+  fetchAppUsers,
+  fetchContacts,
   fetchProfiles,
   hasExtension,
   identityFromSecret,
@@ -68,6 +70,8 @@ interface State {
   drafts: Record<string, string>;
   leaderboard: LeaderEntry[];
   leaderboardLoading: boolean;
+  /** True while importing app-using friends from the follow list. */
+  friendsLoading: boolean;
   feedTag: "dryjuly" | "mocktail";
   revealKey: boolean;
   /** Month currently shown in the Calendar tab (YYYY-MM). */
@@ -101,6 +105,7 @@ const state: State = {
   drafts: {},
   leaderboard: [],
   leaderboardLoading: false,
+  friendsLoading: false,
   feedTag: "dryjuly",
   revealKey: false,
   calMonth: todayIso().slice(0, 7)
@@ -761,7 +766,7 @@ function renderLeaderboard(): string {
     </button>`;
 
   if (buddies.length === 0) {
-    return `<p class="note" style="margin-bottom:0">No buddies yet — add one above.</p>`;
+    return `<p class="note" style="margin-bottom:0">No buddies yet — import your Nostr friends or add one above.</p>`;
   }
 
   const rows =
@@ -896,9 +901,13 @@ function renderProfile(): string {
 
     <div class="card">
       <h2>Buddies & leaderboard</h2>
-      <p class="note" style="margin-top:0">Follow friends by npub and compare streaks. Reads their public progress from Nostr.</p>
-      <label class="field">
-        <span>Add a buddy (npub or hex)</span>
+      <p class="note" style="margin-top:0">Compare streaks with friends. Reads their public progress from Nostr.</p>
+      <button class="btn" data-action="import-friends" ${state.friendsLoading ? "disabled" : ""}>
+        ${state.friendsLoading ? "Scanning your follows…" : "✨ Add Nostr friends who use the app"}
+      </button>
+      <p class="note">Scans the people you follow on Nostr and adds the ones already tracking a challenge here.</p>
+      <label class="field" style="margin-top:6px">
+        <span>Or add a buddy by hand (npub or hex)</span>
         <input id="buddy-npub" placeholder="npub1…" autocomplete="off" />
       </label>
       <button class="btn secondary" data-action="add-buddy">Add buddy</button>
@@ -1082,6 +1091,9 @@ async function onClick(e: MouseEvent) {
       break;
     case "add-buddy":
       addBuddy(val("#buddy-npub"));
+      break;
+    case "import-friends":
+      await importFriends();
       break;
     case "remove-buddy":
       removeBuddy(target.dataset.pubkey!);
@@ -1354,6 +1366,46 @@ function removeBuddy(pubkey: string) {
   state.leaderboard = state.leaderboard.filter((e) => e.pubkey !== pubkey);
   persist();
   render();
+}
+
+/**
+ * Scan the people the user follows on Nostr (NIP-02) and auto-add the ones
+ * who also publish Dry July progress as buddies, then refresh the board.
+ */
+async function importFriends() {
+  if (!state.identity || state.friendsLoading) return;
+  state.friendsLoading = true;
+  render();
+  let added: string[] = [];
+  try {
+    const contacts = await fetchContacts(state.identity.pubkey);
+    if (contacts.length === 0) {
+      toast("No follows found on your relays");
+      return;
+    }
+    const buddies = state.data.settings.buddies;
+    const known = new Set([state.identity.pubkey, ...buddies]);
+    const candidates = contacts.filter((p) => !known.has(p));
+    if (candidates.length === 0) {
+      toast("Your follows are already added");
+      return;
+    }
+    const appUsers = await fetchAppUsers(candidates);
+    added = candidates.filter((p) => appUsers.has(p));
+    if (added.length === 0) {
+      toast(`Scanned ${candidates.length} follows — none use the app yet`);
+      return;
+    }
+    state.data.settings.buddies = [...buddies, ...added];
+    persist();
+    toast(`Added ${added.length} friend${added.length === 1 ? "" : "s"} 🎉`);
+  } catch {
+    toast("Couldn't reach relays — try again");
+  } finally {
+    state.friendsLoading = false;
+    render();
+  }
+  if (added.length) await refreshLeaderboard();
 }
 
 async function refreshLeaderboard() {
