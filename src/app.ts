@@ -46,7 +46,7 @@ import { benefitForStreak, dailyTip } from "./tips";
 import { icons, logoSvg } from "./icons";
 import QRCode from "qrcode";
 
-type View = "today" | "calendar" | "community" | "profile";
+type View = "today" | "community" | "profile";
 
 interface State {
   identity: Identity | null;
@@ -293,8 +293,6 @@ function renderView(): string {
   switch (state.view) {
     case "today":
       return renderToday();
-    case "calendar":
-      return renderCalendar();
     case "community":
       return renderCommunity();
     case "profile":
@@ -310,7 +308,6 @@ function renderTabbar(): string {
   return `
     <nav class="tabbar">
       ${tab("today", "Today", icons.today)}
-      ${tab("calendar", "Calendar", icons.calendar)}
       ${tab("community", "Community", icons.community)}
       ${tab("profile", "Profile", icons.profile)}
     </nav>`;
@@ -387,23 +384,18 @@ function renderToday(): string {
           <div class="lbl">day streak</div>
         </div>
       </div>
-      <p class="sub">
+      <p class="sub" style="margin-bottom:0">
         ${
           checkedToday
             ? "Nice — today is logged alcohol-free 🌿"
-            : "Have you stayed dry today?"
+            : "Tap today in the calendar below to log your dry day 👇"
         }
       </p>
-      ${
-        checkedToday
-          ? `<button class="btn done" data-action="check-in">${icons.check} Logged for today</button>`
-          : `<button class="btn" data-action="check-in">${icons.check} I stayed dry today</button>`
-      }
     </div>
 
     ${slipCard}
 
-    ${renderQuickLog()}
+    ${renderCalendarCard()}
 
     ${renderBenefitCard(stats)}
 
@@ -430,6 +422,8 @@ function renderToday(): string {
       </div>
     </div>
 
+    ${renderTrendCard(stats)}
+
     ${renderJournalCard()}
 
     <div class="card">
@@ -437,39 +431,6 @@ function renderToday(): string {
       <p class="note" style="margin-top:0">Post an update to the #dryjuly community on Nostr.</p>
       <textarea id="share-text" rows="2" placeholder="Day ${stats.currentStreak} and feeling great…"></textarea>
       <button class="btn secondary" data-action="share-checkin" style="margin-top:10px">Post to community</button>
-    </div>`;
-}
-
-/** A row of the last 7 days you can tap to log dry/not — catch up without
- *  leaving the Today screen (people often log a day the morning after). */
-function renderQuickLog(): string {
-  const today = todayIso();
-  const dows = ["S", "M", "T", "W", "T", "F", "S"];
-  const chips = recentTrend(state.data.days, 7)
-    .map(({ iso, on }) => {
-      const [y, m, d] = iso.split("-").map(Number);
-      const isToday = iso === today;
-      const cls = ["qd"];
-      if (on) cls.push("on");
-      if (isToday) cls.push("today");
-      return `<button class="${cls.join(" ")}" data-action="toggle-day" data-day="${iso}">
-                <span class="qd-dow">${isToday ? "Today" : dows[new Date(y, m - 1, d).getDay()]}</span>
-                <span class="qd-dom">${on ? "✓" : d}</span>
-              </button>`;
-    })
-    .join("");
-
-  return `
-    <div class="card">
-      <div class="flex-between" style="margin-bottom:10px">
-        <h2 style="margin:0">Log your days</h2>
-        <span class="note" style="margin:0">tap to toggle</span>
-      </div>
-      <div class="quicklog">${chips}</div>
-      <p class="note" style="margin-bottom:0">
-        Forgot to check in yesterday? Catch up here — or open the
-        <strong>Calendar</strong> tab for the whole challenge.
-      </p>
     </div>`;
 }
 
@@ -533,7 +494,7 @@ function renderJournalCard(): string {
 
 /* ---- Calendar ---- */
 
-function renderCalendar(): string {
+function renderCalendarCard(): string {
   const [cy, cm] = state.calMonth.split("-").map(Number);
   const year = cy;
   const month0 = cm - 1;
@@ -594,24 +555,18 @@ function renderCalendar(): string {
         </span>
         <span class="note" style="margin:0">${
           state.calMonth === today.slice(0, 7)
-            ? "tap a day to toggle"
+            ? "tap a day to log it"
             : `<button class="linklike" data-action="cal-today">Back to this month</button>`
         }</span>
       </div>
       <p class="note" style="margin:10px 0 0">
-        Tap any past day to toggle it — dots mark your <strong>${esc(challenge.title)}</strong> days. Synced via Nostr.
+        Tap any day up to today — today included — to log it. Dots mark your
+        <strong>${esc(challenge.title)}</strong> days. Synced via Nostr.
       </p>
-    </div>
-
-    <div class="stats">
-      <div class="stat green"><div class="v">${stats.total}</div><div class="k">Total dry days</div></div>
-      <div class="stat gold"><div class="v">${stats.currentStreak}</div><div class="k">Current streak</div></div>
-    </div>
-
-    ${renderTrendCard(stats)}`;
+    </div>`;
 }
 
-/** Shift the Calendar tab by whole months. */
+/** Shift the Calendar by whole months. */
 function shiftCalMonth(delta: number) {
   const [y, m] = state.calMonth.split("-").map(Number);
   const d = new Date(y, m - 1 + delta, 1);
@@ -1017,9 +972,6 @@ async function onClick(e: MouseEvent) {
       } catch (err) {
         toast((err as Error).message);
       }
-      break;
-    case "check-in":
-      toggleDay(todayIso());
       break;
     case "set-mood":
       setJournalField("mood", Number(target.dataset.val));
