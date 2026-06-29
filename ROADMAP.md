@@ -38,6 +38,13 @@ Real encouragement with sats — the most nostr-true feature.
 - [x] Data export/import (JSON merge) + on-device npub QR code
 - [x] Light mode + theming
 
+## Milestone 5 — Logging UX, any-month & engagement ✅
+- [x] Quick-log strip on Today (toggle the last 7 days without opening the calendar)
+- [x] Default challenge adapts to the current/upcoming month (not hard-locked to July)
+- [x] One-tap challenge presets (Dry July, Dry January, Sober October, 30/90 days)
+- [x] Streak-based "what's happening in your body" benefit card
+- [x] Rotating daily tip (practical + educational)
+
 ## Later (needs a backend or out of scope)
 - [ ] Background Web Push (needs VAPID keys + a serverless push endpoint)
 - [ ] NIP-58 badge events for milestones

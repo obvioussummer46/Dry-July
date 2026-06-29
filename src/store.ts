@@ -81,10 +81,31 @@ export const DEFAULT_SETTINGS: Settings = {
   buddies: []
 };
 
-/** Dry July of the current year. */
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December"
+];
+
+/**
+ * A sensible default challenge for whenever someone first opens the app —
+ * the current month, or the next one if we're already near its end. Not
+ * locked to July: a March visitor gets "Dry March", and so on.
+ */
 export function defaultChallenge(): Challenge {
-  const year = new Date().getFullYear();
-  return { title: "Dry July", start: `${year}-07-01`, length: 31 };
+  const now = new Date();
+  let year = now.getFullYear();
+  let month = now.getMonth(); // 0-based
+  // In the last stretch of a month, point at the upcoming one instead.
+  if (now.getDate() > 20) {
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+  }
+  const start = `${year}-${String(month + 1).padStart(2, "0")}-01`;
+  const length = new Date(year, month + 1, 0).getDate(); // days in that month
+  return { title: `Dry ${MONTH_NAMES[month]}`, start, length };
 }
 
 export function emptyData(): AppData {

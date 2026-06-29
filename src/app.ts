@@ -36,10 +36,12 @@ import {
   challengeGrid,
   challengeStartOffset,
   computeStats,
+  isoDate,
   recentTrend,
   todayIso,
   topBadgeDays
 } from "./stats";
+import { benefitForStreak, dailyTip } from "./tips";
 import { icons, logoSvg } from "./icons";
 import QRCode from "qrcode";
 
@@ -319,7 +321,7 @@ function renderOnboard(): string {
       <div class="logo-xl">${logoSvg.replace('class="logo"', "")}</div>
       <h1>Dry July</h1>
       <p class="tagline">
-        Go alcohol-free for the month and cheer each other on.<br/>
+        Go alcohol-free for a month — any month — and cheer each other on.<br/>
         Your streak lives on <strong>Nostr</strong> — yours to keep, anywhere.
       </p>
       <div class="actions">
@@ -397,6 +399,12 @@ function renderToday(): string {
 
     ${slipCard}
 
+    ${renderQuickLog()}
+
+    ${renderBenefitCard(stats)}
+
+    ${renderTipCard()}
+
     <div class="stats">
       <div class="stat green"><div class="v">${stats.challengeDays}<span class="muted" style="font-size:15px">/${len}</span></div><div class="k">${esc(title)} days</div></div>
       <div class="stat gold"><div class="v">${stats.longestStreak}</div><div class="k">Longest streak</div></div>
@@ -425,6 +433,64 @@ function renderToday(): string {
       <p class="note" style="margin-top:0">Post an update to the #dryjuly community on Nostr.</p>
       <textarea id="share-text" rows="2" placeholder="Day ${stats.currentStreak} and feeling great…"></textarea>
       <button class="btn secondary" data-action="share-checkin" style="margin-top:10px">Post to community</button>
+    </div>`;
+}
+
+/** A row of the last 7 days you can tap to log dry/not — catch up without
+ *  leaving the Today screen (people often log a day the morning after). */
+function renderQuickLog(): string {
+  const today = todayIso();
+  const dows = ["S", "M", "T", "W", "T", "F", "S"];
+  const chips = recentTrend(state.data.days, 7)
+    .map(({ iso, on }) => {
+      const [y, m, d] = iso.split("-").map(Number);
+      const isToday = iso === today;
+      const cls = ["qd"];
+      if (on) cls.push("on");
+      if (isToday) cls.push("today");
+      return `<button class="${cls.join(" ")}" data-action="toggle-day" data-day="${iso}">
+                <span class="qd-dow">${isToday ? "Today" : dows[new Date(y, m - 1, d).getDay()]}</span>
+                <span class="qd-dom">${on ? "✓" : d}</span>
+              </button>`;
+    })
+    .join("");
+
+  return `
+    <div class="card">
+      <div class="flex-between" style="margin-bottom:10px">
+        <h2 style="margin:0">Log your days</h2>
+        <span class="note" style="margin:0">tap to toggle</span>
+      </div>
+      <div class="quicklog">${chips}</div>
+      <p class="note" style="margin-bottom:0">
+        Forgot to check in yesterday? Catch up here — or open the
+        <strong>Calendar</strong> tab for the whole challenge.
+      </p>
+    </div>`;
+}
+
+/** A short "what's happening in your body" note tied to the current streak. */
+function renderBenefitCard(stats: ReturnType<typeof computeStats>): string {
+  const b = benefitForStreak(stats.currentStreak);
+  return `
+    <div class="card benefit">
+      <h2>Your body right now</h2>
+      <div class="benefit-row">
+        <div class="benefit-ic">${b.icon}</div>
+        <div>
+          <div class="benefit-title">${b.title}</div>
+          <p class="note" style="margin:4px 0 0">${b.body}</p>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** A rotating daily tip — something new to read each day. */
+function renderTipCard(): string {
+  return `
+    <div class="card tip">
+      <div class="tip-ic">💡</div>
+      <p>${esc(dailyTip(todayIso()))}</p>
     </div>`;
 }
 
@@ -781,7 +847,14 @@ function renderProfile(): string {
 
     <div class="card">
       <h2>Challenge</h2>
-      <p class="note" style="margin-top:0">Not July? Run any challenge — Dry January, 90 days, your call.</p>
+      <p class="note" style="margin-top:0">Any month, any length — pick a preset or set your own.</p>
+      <div class="presets">
+        <button class="chip" data-action="preset-challenge" data-preset="july">Dry July</button>
+        <button class="chip" data-action="preset-challenge" data-preset="january">Dry January</button>
+        <button class="chip" data-action="preset-challenge" data-preset="october">Sober October</button>
+        <button class="chip" data-action="preset-challenge" data-preset="30">30 days</button>
+        <button class="chip" data-action="preset-challenge" data-preset="90">90 days</button>
+      </div>
       <label class="field">
         <span>Title</span>
         <input id="set-ch-title" value="${esc(c.title)}" placeholder="Dry July" />
@@ -969,6 +1042,9 @@ async function onClick(e: MouseEvent) {
     case "save-challenge":
       saveChallenge();
       break;
+    case "preset-challenge":
+      applyChallengePreset(target.dataset.preset!);
+      break;
     case "toggle-reminders":
       await toggleReminders();
       break;
@@ -1133,6 +1209,52 @@ function saveChallenge() {
   persist();
   render();
   toast("Challenge updated");
+}
+
+/** The next occurrence (this year or next) of the 1st of a given month. */
+function nextMonthStart(month0: number): string {
+  const now = new Date();
+  const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  let year = now.getFullYear();
+  if (new Date(year, month0, 1) < todayMidnight) year += 1;
+  return isoDate(new Date(year, month0, 1));
+}
+
+/** One-tap challenge presets so it's clearly not a July-only app. */
+function applyChallengePreset(preset: string) {
+  const c = state.data.challenge;
+  switch (preset) {
+    case "july":
+      c.title = "Dry July";
+      c.start = nextMonthStart(6);
+      c.length = 31;
+      break;
+    case "january":
+      c.title = "Dry January";
+      c.start = nextMonthStart(0);
+      c.length = 31;
+      break;
+    case "october":
+      c.title = "Sober October";
+      c.start = nextMonthStart(9);
+      c.length = 31;
+      break;
+    case "30":
+      c.title = "30 Days Dry";
+      c.start = todayIso();
+      c.length = 30;
+      break;
+    case "90":
+      c.title = "90 Days Dry";
+      c.start = todayIso();
+      c.length = 90;
+      break;
+    default:
+      return;
+  }
+  persist();
+  render();
+  toast(`Challenge set: ${c.title}`);
 }
 
 async function toggleReminders() {

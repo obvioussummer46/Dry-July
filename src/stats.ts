@@ -44,7 +44,7 @@ const BADGE_TIERS: { days: number; label: string; icon: string }[] = [
   { days: 7, label: "One week", icon: "⭐" },
   { days: 14, label: "Two weeks", icon: "🔥" },
   { days: 21, label: "Habit formed", icon: "💪" },
-  { days: 31, label: "Dry July!", icon: "🏆" },
+  { days: 31, label: "A full month!", icon: "🏆" },
   { days: 60, label: "Two months", icon: "💎" },
   { days: 90, label: "90 days", icon: "👑" }
 ];

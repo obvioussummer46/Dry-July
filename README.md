@@ -23,7 +23,11 @@ other way around — **Nostr is the backend**:
 ## Features
 
 - 🔥 **Daily check-in** with an animated streak ring
+- ⏪ **Quick-log strip** — catch up yesterday & the last week right from the Today screen
+- 🧠 **What's-happening card** — see the benefit your current streak is unlocking
+- 💡 **Daily tip** — a fresh practical or educational nudge every day
 - 📅 **Calendar** — tap any day to toggle it dry/not-dry
+- 🗓️ **Any month, any length** — presets for Dry July, Dry January, Sober October, 30/90 days
 - 🏆 **Milestone badges** (1 → 90 days) with unlock celebrations
 - 💛 **Supportive slip flow** — a broken streak keeps your best, no shaming
 - 📝 **Daily journal** — log mood, cravings & a private note (synced via Nostr)
