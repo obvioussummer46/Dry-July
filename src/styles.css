@@ -319,49 +319,6 @@ button {
   border-color: transparent;
 }
 
-/* ---------- Quick day log (Today) ---------- */
-.quicklog {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 7px;
-}
-.qd {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  padding: 9px 0;
-  border-radius: 12px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  color: var(--muted);
-}
-.qd:active {
-  transform: scale(0.96);
-}
-.qd-dow {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-.qd-dom {
-  font-size: 15px;
-  font-weight: 800;
-  color: var(--text);
-}
-.qd.on {
-  background: linear-gradient(180deg, #2bd47a, var(--accent));
-  border-color: transparent;
-}
-.qd.on .qd-dow,
-.qd.on .qd-dom {
-  color: #06210f;
-}
-.qd.today {
-  outline: 2px solid var(--accent-2);
-  outline-offset: 1px;
-}
-
 /* ---------- Benefit & tip cards (Today) ---------- */
 .benefit-row {
   display: flex;
