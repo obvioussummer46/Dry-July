@@ -34,9 +34,10 @@ import {
 import {
   badges,
   challengeGrid,
-  challengeStartOffset,
   computeStats,
   isoDate,
+  monthGrid,
+  monthStartOffset,
   recentTrend,
   todayIso,
   topBadgeDays
@@ -68,6 +69,8 @@ interface State {
   leaderboardLoading: boolean;
   feedTag: "dryjuly" | "mocktail";
   revealKey: boolean;
+  /** Month currently shown in the Calendar tab (YYYY-MM). */
+  calMonth: string;
 }
 
 interface LeaderEntry {
@@ -98,7 +101,8 @@ const state: State = {
   leaderboard: [],
   leaderboardLoading: false,
   feedTag: "dryjuly",
-  revealKey: false
+  revealKey: false,
+  calMonth: todayIso().slice(0, 7)
 };
 
 let root: HTMLElement;
@@ -530,10 +534,14 @@ function renderJournalCard(): string {
 /* ---- Calendar ---- */
 
 function renderCalendar(): string {
-  const challenge = state.data.challenge;
-  const grid = challengeGrid(challenge);
-  const offset = challengeStartOffset(challenge);
+  const [cy, cm] = state.calMonth.split("-").map(Number);
+  const year = cy;
+  const month0 = cm - 1;
+  const grid = monthGrid(year, month0);
+  const offset = monthStartOffset(year, month0);
   const set = new Set(state.data.days);
+  // Days that fall inside the active challenge window get a subtle marker.
+  const challengeSet = new Set(challengeGrid(state.data.challenge).map((c) => c.iso));
   const today = todayIso();
   const dows = ["M", "T", "W", "T", "F", "S", "S"];
 
@@ -551,25 +559,47 @@ function renderCalendar(): string {
       if (on) cls.push("on");
       if (isToday) cls.push("today");
       if (future) cls.push("future");
+      if (challengeSet.has(c.iso)) cls.push("inch");
       const action = future ? "" : `data-action="toggle-day" data-day="${c.iso}"`;
       return `<div class="${cls.join(" ")}" ${action}>${c.dom}</div>`;
     })
     .join("");
 
+  const label = new Date(year, month0, 1).toLocaleDateString(undefined, {
+    month: "long",
+    year: "numeric"
+  });
+  const challenge = state.data.challenge;
   const stats = computeStats(state.data);
+  const viewingChallenge = state.calMonth === challenge.start.slice(0, 7);
 
   return `
     <div class="card">
-      <div class="flex-between" style="margin-bottom:14px">
-        <h2 style="margin:0">${esc(challenge.title)}</h2>
-        <span class="pill">${stats.challengeDays} of ${stats.challengeLength} dry</span>
+      <div class="cal-head">
+        <button class="cal-nav" data-action="cal-prev" aria-label="Previous month">‹</button>
+        <div class="cal-title">${esc(label)}</div>
+        <button class="cal-nav" data-action="cal-next" aria-label="Next month">›</button>
       </div>
       <div class="cal">
         ${dows.map((d) => `<div class="dow">${d}</div>`).join("")}
         ${spacers}${cells}
       </div>
-      <p class="note" style="margin-bottom:0">
-        Tap any past day to toggle it. Days sync to your Nostr account automatically.
+      <div class="flex-between" style="margin-top:14px">
+        <span class="pill ${viewingChallenge ? "" : "tap"}" ${
+          viewingChallenge ? "" : `data-action="cal-challenge"`
+        }>
+          ${esc(challenge.title)} · ${stats.challengeDays}/${stats.challengeLength}${
+            viewingChallenge ? "" : " ›"
+          }
+        </span>
+        <span class="note" style="margin:0">${
+          state.calMonth === today.slice(0, 7)
+            ? "tap a day to toggle"
+            : `<button class="linklike" data-action="cal-today">Back to this month</button>`
+        }</span>
+      </div>
+      <p class="note" style="margin:10px 0 0">
+        Tap any past day to toggle it — dots mark your <strong>${esc(challenge.title)}</strong> days. Synced via Nostr.
       </p>
     </div>
 
@@ -579,6 +609,14 @@ function renderCalendar(): string {
     </div>
 
     ${renderTrendCard(stats)}`;
+}
+
+/** Shift the Calendar tab by whole months. */
+function shiftCalMonth(delta: number) {
+  const [y, m] = state.calMonth.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  state.calMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  render();
 }
 
 function renderTrendCard(stats: ReturnType<typeof computeStats>): string {
@@ -994,6 +1032,20 @@ async function onClick(e: MouseEvent) {
       break;
     case "toggle-day":
       toggleDay(target.dataset.day!);
+      break;
+    case "cal-prev":
+      shiftCalMonth(-1);
+      break;
+    case "cal-next":
+      shiftCalMonth(1);
+      break;
+    case "cal-today":
+      state.calMonth = todayIso().slice(0, 7);
+      render();
+      break;
+    case "cal-challenge":
+      state.calMonth = state.data.challenge.start.slice(0, 7);
+      render();
       break;
     case "share-checkin":
       await postNote(val("#share-text"), true);
